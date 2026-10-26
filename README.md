@@ -142,11 +142,21 @@ arduino-cli compile --fqbn "$FQBN" --libraries "$LIBS" firmware/base-node
 arduino-cli upload  --fqbn "$FQBN" --libraries "$LIBS" -p "$PORT" firmware/base-node
 ```
 
+When a node has no saved configuration, it starts a setup AP:
+
+| Node | Setup AP SSID | Default password | URL |
+|---|---|---|---|
+| Base | `TuyaLoraBase-Setup` | `tuya-lora-setup` | `http://192.168.4.1/` |
+| Remote | `TuyaLoraRemote-Setup` | `tuya-lora-setup` | `http://192.168.4.1/` |
+
+The default setup password is public. Change it in the **System** tab after the
+first successful configuration.
+
 ### 2. Configure the remote node
 
-Power the remote node and connect to its `TuyaLoraRemote-Setup` AP, or to the
-configured device AP after first boot. Open `http://192.168.4.1/settings` and
-enter:
+Power the remote node and connect to its `TuyaLoraRemote-Setup` AP (default
+password `tuya-lora-setup`), or to the configured device AP after first boot.
+Open `http://192.168.4.1/settings` and enter:
 
 - the AP SSID, password and channel that the Tuya device expects;
 - the Tuya device ID, 16-character local key and protocol version;
@@ -167,8 +177,8 @@ procedure and troubleshooting.
 
 ### 4. Configure the base node
 
-Connect to the base node's setup AP or its home-WiFi address. Open `/settings`
-and enter:
+Connect to the base node's `TuyaLoraBase-Setup` AP (default password
+`tuya-lora-setup`) or its home-WiFi address. Open `/settings` and enter:
 
 - home WiFi credentials;
 - MQTT broker host, port and credentials;
