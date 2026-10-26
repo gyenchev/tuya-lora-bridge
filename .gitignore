@@ -1,0 +1,18 @@
+# Runtime secrets and local configuration
+secrets.h
+**/secrets.h
+.env
+.env.*
+*.pem
+*.key
+
+# macOS
+.DS_Store
+
+# Arduino and build output
+build/
+*.bin
+*.elf
+*.map
+.pio/
+.vscode/
