@@ -1,3 +1,9 @@
+> [!CAUTION]
+> **Disclaimer: 100% vibecoded / AI-generated.** This project has not been
+> professionally reviewed. Use it entirely at your own risk. The author is not
+> responsible for any damage to hardware, software, property, or persons. Read
+> [`DISCLAIMER.md`](DISCLAIMER.md) before using it.
+
 # Tuya LoRa Bridge
 
 A two-node ESP32 bridge that carries a Tuya local API over LoRa to Home
@@ -71,6 +77,7 @@ No relays, contactors, CT clamps or mains wiring are part of this project.
 tuya-lora-bridge/
 ├── README.md
 ├── LICENSE
+├── DISCLAIMER.md
 ├── docs/
 │   ├── architecture.md
 │   ├── hardware-safety.md
@@ -291,10 +298,15 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 | [`docs/testing.md`](docs/testing.md) | Validation matrix, acceptance checks and known limitations |
 | [`firmware/README.md`](firmware/README.md) | Build, flash, web UI settings, SD updates and board notes |
 
-## License
+## License and disclaimer
 
-MIT. See [`LICENSE`](LICENSE).
+This project is released into the public domain under the **Unlicense**. You may
+copy, modify, publish, use, compile, sell, or distribute it for any purpose,
+commercial or non-commercial, without attribution. See [`LICENSE`](LICENSE).
 
-This is not a certified EV charging controller. Use it only with equipment that
-keeps its own safety and protective functions, and have any mains installation
-checked by a qualified electrician.
+This project is **100% vibecoded / AI-generated** and is not a certified EV
+charging controller. The author is not responsible for any damage to hardware,
+software, property, or persons. Use it at your own risk and read
+[`DISCLAIMER.md`](DISCLAIMER.md). Use it only with equipment that keeps its own
+safety and protective functions, and have any mains installation checked by a
+qualified electrician.
