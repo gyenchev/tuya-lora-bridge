@@ -10,9 +10,10 @@ A two-node ESP32 bridge that carries a Tuya local API over LoRa to Home
 Assistant. The bridge is designed for locations where the Tuya device cannot
 reach the home WiFi, but it does not modify the device or its mains wiring.
 
-The reference implementation targets a Feyree three-phase EV charger. The radio
-link, Tuya proxy, MQTT layer and Home Assistant integration are generic; the DP
-map is device-specific and is kept on the base node.
+The original reference implementation targets a Feyree three-phase EV charger,
+but that scope can change at any time. The radio link, Tuya proxy, MQTT layer
+and Home Assistant integration are generic; the DP map is device-specific and
+is kept on the base node.
 
 - **Firmware version:** 0.2.1
 - **Radio band:** 868 MHz (EU)
@@ -304,9 +305,10 @@ This project is released into the public domain under the **Unlicense**. You may
 copy, modify, publish, use, compile, sell, or distribute it for any purpose,
 commercial or non-commercial, without attribution. See [`LICENSE`](LICENSE).
 
-This project is **100% vibecoded / AI-generated** and is not a certified EV
-charging controller. The author is not responsible for any damage to hardware,
-software, property, or persons. Use it at your own risk and read
-[`DISCLAIMER.md`](DISCLAIMER.md). Use it only with equipment that keeps its own
-safety and protective functions, and have any mains installation checked by a
-qualified electrician.
+This project is **100% vibecoded / AI-generated** and is not a certified
+controller or safety device for any application. It was originally intended to
+interact with an EV charger, but that scope can change at any time. The author
+is not responsible for any damage to hardware, software, property, or persons.
+Use it at your own risk and read [`DISCLAIMER.md`](DISCLAIMER.md). Use it only
+with equipment that keeps its own safety and protective functions, and have any
+mains installation checked by a qualified electrician.
