@@ -94,21 +94,6 @@
 // ---------------------------------------------------------------------------
 // MQTT / Home Assistant
 // ---------------------------------------------------------------------------
-#define MQTT_TOPIC_STATE        "tuya-lora/charger/state"
-#define MQTT_TOPIC_LINK         "tuya-lora/charger/link"
-#define MQTT_TOPIC_AVAILABILITY "tuya-lora/charger/availability"
-#define MQTT_TOPIC_RESULT       "tuya-lora/charger/command/result"
-#define MQTT_TOPIC_DEBUG        "tuya-lora/charger/debug"
-#define MQTT_TOPIC_DPS          "tuya-lora/charger/dps"
-
-#define MQTT_TOPIC_CMD_CHARGE  "tuya-lora/charger/command/charge"
-#define MQTT_TOPIC_CMD_START   "tuya-lora/charger/command/start"
-#define MQTT_TOPIC_CMD_STOP    "tuya-lora/charger/command/stop"
-#define MQTT_TOPIC_CMD_CURRENT "tuya-lora/charger/command/current_limit"
-#define MQTT_TOPIC_CMD_DELAY   "tuya-lora/charger/command/delay"
-#define MQTT_TOPIC_CMD_MODE    "tuya-lora/charger/command/mode"
-#define MQTT_TOPIC_CMD_QUERY   "tuya-lora/charger/command/query"
-
 #define HA_DISCOVERY_PREFIX "homeassistant"
 
 // Stable internal identifier used in discovery topics and device identifiers.
@@ -119,14 +104,9 @@
 // Friendly name shown in Home Assistant.
 #define HA_DEVICE_NAME      "Tuya charger"
 
-// Control is enabled, but the base only allows a command after it has seen a
-// valid DP snapshot and detected a supported profile. Unknown profiles reject
-// control until the DP map is confirmed.
+// Control is enabled, but the base only allows a command after a profile has
+// been loaded and a DP snapshot has been seen.
 #define ENABLE_COMMANDS 1
-
-// "auto" lets the base choose a built-in profile from the DP snapshot. A
-// built-in id or a custom profile id forces that map instead.
-#define DEFAULT_PROFILE_ID "auto"
 
 #define CHARGER_MIN_CURRENT 6
 #define CHARGER_MAX_CURRENT 32

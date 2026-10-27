@@ -54,42 +54,12 @@ struct BaseSettings {
   uint32_t displayOnMs;
   uint32_t splashMs;
 
-  // MQTT topics
-  char mqttTopicState[64];
-  char mqttTopicLink[64];
-  char mqttTopicAvailability[64];
-  char mqttTopicResult[64];
-  char mqttTopicDebug[64];
-  char mqttTopicDps[64];
-  char mqttTopicCmdCharge[64];
-  char mqttTopicCmdStart[64];
-  char mqttTopicCmdStop[64];
-  char mqttTopicCmdCurrent[64];
-  char mqttTopicCmdDelay[64];
-  char mqttTopicCmdMode[64];
-  char mqttTopicCmdQuery[64];
-
   // Home Assistant discovery
   char haDiscoveryPrefix[33];
   char haDeviceId[33];
 
   // Control
   bool enableCommands;
-  char profileId[24];
-  uint8_t minCurrent;
-  uint8_t maxCurrent;
-  uint8_t minDelayH;
-  uint8_t maxDelayH;
-  uint16_t dpSingleChargeId;
-  uint16_t dpSingleCurrentId;
-  uint16_t dpSingleDelayId;
-  uint16_t dpSingleModeId;
-  uint16_t dpThreeChargeId;
-  uint16_t dpThreeCurrentId;
-  uint16_t dpThreeDelayId;
-  uint16_t dpThreeModeId;
-  uint16_t dpObz2ChargeId;
-  uint16_t dpObz2CurrentId;
 };
 
 extern BaseSettings settings;

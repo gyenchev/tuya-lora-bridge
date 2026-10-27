@@ -57,6 +57,9 @@ The Tuya device stays on its own local protections and schedules.
 - Browser-side profile catalog covering the complete tuya-local descriptor
   collection (1,779 devices at the pinned commit), grouped by device type and
   converted in the browser to precompiled Home Assistant MQTT discovery packs.
+- A single active profile per base. Pick a device from the online catalog or
+  edit the generated profile JSON directly; the JSON editor is the source of
+  truth for entities, telemetry and command mappings.
 - Native MQTT entities for lights, fans, covers, climate, water heaters,
   humidifiers, locks, alarms, sirens, valves, events, time/datetime,
   lawn mowers, cameras, sensors, binary sensors, switches, numbers, selects,
@@ -69,8 +72,6 @@ The Tuya device stays on its own local protections and schedules.
   device availability and the active profile instead of charger-only rows.
 - Streaming profile-pack storage (metadata + one small file per discovery
   entity) in a 384 KB LittleFS partition; no single-JSON pack memory ceiling.
-- Offline charger catalog (15 pre-converted packs) plus the three built-in
-  Feyree and F-OBZ2 fallback profiles with stable entity IDs.
 - Web UI for all runtime settings; settings are stored in ESP32 NVS.
 - OLED status display on both nodes.
 - SD-card firmware updates for both nodes.
@@ -111,7 +112,6 @@ tuya-lora-bridge/
 │   ├── profile_mapping.mjs
 │   ├── build_assets.mjs
 │   ├── catalog.json
-│   ├── offline_chargers.json
 │   ├── package.json
 │   └── package-lock.json
 └── firmware/
@@ -225,17 +225,17 @@ Connect to the base node's `TuyaLoraBase-Setup` AP (default password
 - MQTT broker host, port and credentials;
 - the same LoRa PSK and radio settings as the remote node;
 - Home Assistant device name and discovery prefix;
-- the **Profile** tab: auto-detect, a built-in profile, or a custom JSON profile;
-- optional timing and control limits.
+- the **Profile** tab: open the profile editor, choose a device from the online
+  tuya-local catalog, fine-tune its JSON, and save it to the base;
+- optional timing and control settings.
 
-The Profile tab also shows the active, detected and match state from the last DP
-snapshot. Built-in compatibility profiles are `3-phase`, `single-phase` and
-`F-OBZ2`; custom profiles are limited to four entries and remain in NVS, not in
-the repository. A generic custom profile describes Home Assistant entities in a
-tuya-local-style `entities` list; the base then publishes discovery and state for
-those entities automatically. The base node publishes Home Assistant discovery
-automatically. The device name and identifier can be changed later; keep the
-identifier stable to avoid creating a second Home Assistant device.
+The base stores exactly one active profile: metadata plus one precompiled Home
+Assistant discovery entry per entity. The Profile tab shows the active profile
+and links to `/profiles`, where the catalog selection and JSON editor live. The
+base publishes Home Assistant discovery automatically. The device name drives
+the MQTT topic prefix and Home Assistant entity IDs; changing it renames the
+entities. Keep the stable device identifier unchanged to avoid creating a second
+Home Assistant device.
 
 ### 5. Verify
 
@@ -247,10 +247,10 @@ mosquitto_sub -v -t 'homeassistant/+/+/config'
 Request a fresh snapshot:
 
 ```bash
-mosquitto_pub -t tuya-lora/charger/command/query -m query
+mosquitto_pub -t tuya-lora/<slug>/command/query -m query
 ```
 
-The retained `tuya-lora/charger/state` and `tuya-lora/charger/link` topics should
+The retained `tuya-lora/<slug>/state` and `tuya-lora/<slug>/link` topics should
 update, and Home Assistant should create the entities described in
 [`docs/home-assistant.md`](docs/home-assistant.md).
 
@@ -258,8 +258,8 @@ update, and Home Assistant should create the entities described in
 
 All network, MQTT, Tuya and LoRa credentials are runtime settings stored in
 ESP32 NVS and edited through the node web UI. The firmware does not compile in
-credentials. The selected DP profile and any custom profile JSON are also stored
-in NVS, so changing devices does not require rebuilding the base firmware.
+credentials. The active profile is stored in LittleFS, so changing devices does
+not require rebuilding the base firmware.
 
 - Base status: `http://<base-ip>/`
 - Base settings: `http://<base-ip>/settings`
@@ -287,24 +287,24 @@ Keep the card inserted until the update finishes.
 ## Home Assistant
 
 The base node publishes ordinary MQTT topics and retained discovery configs.
-There is no custom component. The default topics keep the `charger` segment for
-backward compatibility; they are configurable in the base web UI. The main
-topics are:
+There is no custom component. The topic prefix is derived from the Home
+Assistant device name: `tuya-lora/<slug>/...`, where `<slug>` is the lower-case,
+underscore-separated name (for example `CarCharger` becomes `carcharger`).
+Changing the name changes the topics and Home Assistant entity IDs; the base
+clears the old discovery entries and republishes the profile with resolved
+placeholders. The main topics are:
 
 | Topic | Purpose |
 |---|---|
-| `tuya-lora/charger/state` | mapped state JSON |
-| `tuya-lora/charger/state/entities/e0` … `e9` | per-entity state for generic profiles |
-| `tuya-lora/charger/link` | RSSI, SNR, age and last-seen diagnostics |
-| `tuya-lora/charger/dps` | raw Tuya DP snapshot |
-| `tuya-lora/charger/availability` | `online` / `offline` |
-| `tuya-lora/charger/command/*` | legacy control and query commands |
-| `tuya-lora/charger/command/generic/e0` … `e9` | per-entity commands for generic profiles |
-| `tuya-lora/charger/command/result` | command result |
+| `tuya-lora/<slug>/state` | mapped state JSON |
+| `tuya-lora/<slug>/link` | RSSI, SNR, age and last-seen diagnostics |
+| `tuya-lora/<slug>/dps` | raw Tuya DP snapshot |
+| `tuya-lora/<slug>/availability` | `online` / `offline` |
+| `tuya-lora/<slug>/command/dp` | profile command fragment |
+| `tuya-lora/<slug>/command/query` | snapshot request |
+| `tuya-lora/<slug>/command/result` | command result |
 
-The default entity prefix is `tuya_<device-name>_<suffix>`. Generic profile
-entities use `tuya_<device-name>_profile_e0` and similar stable suffixes.
-See [`docs/home-assistant.md`](docs/home-assistant.md) for the entity list,
+The entity prefix is `tuya_<device-name>_<suffix>`. See [`docs/home-assistant.md`](docs/home-assistant.md) for the entity list,
 payloads, automations and troubleshooting.
 
 ## Safety
@@ -330,7 +330,7 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 - The configuration and status web UIs are unauthenticated. Keep them on a
   trusted network.
 - Use a dedicated MQTT user limited to the bridge topics.
-- Treat `tuya-lora/charger/command/*` as privileged: any MQTT client that can
+- Treat `tuya-lora/<slug>/command/*` as privileged: any MQTT client that can
   publish there can control charging.
 - Do not expose MQTT or Home Assistant to the internet without TLS and
   authentication or a VPN.
@@ -350,16 +350,13 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 - The raw-DP sensor is always published in pack mode and exposes every DP as an
   attribute. All remaining DPs are therefore available even when a platform
   cannot represent them natively.
-- The built-in `3-phase`, `single-phase` and `F-OBZ2` profiles keep their
-  existing legacy state/control model and Home Assistant entity IDs.
 - Profile packs are uploaded as NDJSON and stored as metadata plus one small
   file per discovery entity in LittleFS. The base accepts uploads up to 250 KB,
   up to 256 discovery entities, and 24 KB per discovery item. The custom
   `partitions.csv` gives LittleFS 384 KB and two 1.75 MB OTA app partitions.
 - The online catalog requires browser internet access (GitHub raw + js-yaml
-  CDN). The offline catalog and the three built-ins work without internet.
-- The legacy custom JSON editor remains for manual compact profiles (four
-  profiles, 8192 bytes); it is no longer the recommended path.
+  CDN). There is no offline profile catalog; the base stores only the profile
+  that was saved to it.
 - One Tuya device is supported per bridge. Simultaneous multi-device support is
   not implemented.
 - Raw DP snapshots are capped at 2560 bytes (32 LoRa chunks of 80 bytes).
@@ -378,12 +375,12 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | Topology, node responsibilities, data flow and design constraints |
 | [`docs/network-and-pairing.md`](docs/network-and-pairing.md) | AP setup, Tuya pairing, discovery and connectivity checks |
-| [`docs/tuya-device.md`](docs/tuya-device.md) | Tuya local API, key retrieval, reference DP maps, generic entity descriptors and the legacy custom schema |
+| [`docs/tuya-device.md`](docs/tuya-device.md) | Tuya local API, key retrieval, reference DP maps and the profile JSON model |
 | [`docs/lora-protocol.md`](docs/lora-protocol.md) | Frame format, messages, ACKs, encryption and airtime |
 | [`docs/home-assistant.md`](docs/home-assistant.md) | MQTT topics, discovery, entities, automations and dashboards |
 | [`docs/hardware-safety.md`](docs/hardware-safety.md) | BOM, power, enclosure, radio rules and EVSE safety |
 | [`docs/testing.md`](docs/testing.md) | Validation matrix, acceptance checks and known limitations |
-| [`web/README.md`](web/README.md) | Browser profile catalog, converter, catalog generation and offline packs |
+| [`web/README.md`](web/README.md) | Browser profile catalog, JSON editor, converter and catalog generation |
 | [`firmware/README.md`](firmware/README.md) | Build, flash, web UI settings, SD updates and board notes |
 
 ## License and disclaimer

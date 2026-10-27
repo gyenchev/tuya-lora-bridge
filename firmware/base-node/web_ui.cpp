@@ -11,6 +11,7 @@
 #include "browser_profile.h"
 #include "config.h"
 #include "config_store.h"
+#include "ha_discovery.h"
 #include "lora_protocol.h"
 #include "profiles.h"
 #include "web_assets.h"
@@ -25,11 +26,9 @@ extern uint32_t lastSeenMs;
 extern int lastRssi;
 extern float lastSnr;
 extern char dpJson[];
-extern bool profileMatched;
 extern char profileError[];
 extern const char *profileActiveId();
-extern const char *profileDetectedId();
-extern uint8_t profileEntityCount();
+extern uint16_t profileEntityCount();
 
 namespace tuya_lora {
 
@@ -82,6 +81,7 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
   button { padding: 10px 16px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; font-weight: 650; cursor: pointer; }
   button.secondary { background: #8883; color: inherit; }
   button.danger { background: #b91c1c; }
+  .button-link { display: inline-block; padding: 10px 16px; border-radius: 8px; background: #2563eb; color: #fff; font-weight: 650; text-decoration: none; }
   .hint { font-size: .85rem; opacity: .7; margin: 6px 0 0; }
   .def { font-weight: 400; opacity: .6; font-size: .8rem; }
   hr { border: 0; border-top: 1px solid #8884; margin: 32px 0; }
@@ -105,7 +105,6 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
   <div class="tabs" role="tablist">
     <button type="button" class="tab active" data-tab="wifi" role="tab">WiFi</button>
     <button type="button" class="tab" data-tab="mqtt" role="tab">MQTT</button>
-    <button type="button" class="tab" data-tab="topics" role="tab">Topics</button>
     <button type="button" class="tab" data-tab="lora" role="tab">LoRa</button>
     <button type="button" class="tab" data-tab="device" role="tab">Home Assistant</button>
     <button type="button" class="tab" data-tab="timing" role="tab">Timing</button>
@@ -148,11 +147,6 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
       {{FIELDS_MQTT}}
     </section>
 
-    <section class="tab-panel" id="tab-topics" data-tab-panel="topics" role="tabpanel">
-      <h2>MQTT topics</h2>
-      {{FIELDS_TOPICS}}
-    </section>
-
     <section class="tab-panel" id="tab-lora" data-tab-panel="lora" role="tabpanel">
       <h2>LoRa link</h2>
       <label for="lora_psk">Pre-shared key <span class="def">required</span></label>
@@ -165,7 +159,7 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
       <h2>Home Assistant</h2>
       <label for="ha_name">Device name <span class="def">default Tuya charger</span></label>
       <input id="ha_name" name="ha_name" type="text" maxlength="32" required value="{{HA_NAME}}">
-      <p class="hint">Friendly name shown in Home Assistant.</p>
+      <p class="hint">Friendly name shown in Home Assistant. MQTT topics and Home Assistant entity IDs are derived from this name. Renaming the device changes both; the base clears the old discovery entries and republishes them with the new IDs and resolved profile placeholders.</p>
       <label for="timezone">Timezone <span class="def">default Europe/Sofia</span></label>
       <select id="timezone" name="timezone">{{TIMEZONE_OPTIONS}}</select>
       <p class="hint">Used for timestamps in Home Assistant. Select the closest city/timezone.</p>
@@ -180,25 +174,19 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
     <section class="tab-panel" id="tab-control" data-tab-panel="control" role="tabpanel">
       <h2>Control</h2>
       {{FIELDS_CONTROL}}
+      <p class="hint">Command DPs and value ranges come from the active profile. The profile editor is the single place to change them.</p>
     </section>
 
     <section class="tab-panel" id="tab-profile" data-tab-panel="profile" role="tabpanel">
       <h2>Device profile</h2>
       <div class="status">
         <div><strong>Active:</strong> {{PROFILE_ACTIVE}}</div>
-        <div><strong>Detected:</strong> {{PROFILE_DETECTED}}</div>
-        <div><strong>Snapshot match:</strong> {{PROFILE_MATCH}}</div>
-        <div><strong>Profile entities:</strong> {{PROFILE_ENTITIES}}</div>
+        <div><strong>Type:</strong> {{PROFILE_TYPE}}</div>
+        <div><strong>Entities:</strong> {{PROFILE_ENTITIES}}</div>
         <div><strong>Note:</strong> {{PROFILE_NOTE}}</div>
       </div>
-      <label for="profile_id">DP profile</label>
-      <select id="profile_id" name="profile_id">{{PROFILE_OPTIONS}}</select>
-      <p class="hint"><a href="/profiles">Open profile catalog</a> to browse the online tuya-local catalog or the offline charger packs, convert a descriptor in the browser and save only the selected pack to the base.</p>
-      <p class="hint">Auto-detect chooses a built-in or custom profile from the DP keys in the last snapshot. Selecting a profile, including a browser pack, forces its state map. Save and reboot to apply the selection.</p>
-      <p class="hint">The Control tab DP IDs override outgoing command DPs for built-in profiles. Browser packs and custom profiles define their own command mappings.</p>
-      <label for="profiles_json">Custom profiles (JSON) <span class="def">optional, max 8192 bytes</span></label>
-      <textarea id="profiles_json" name="profiles_json" maxlength="8192" spellcheck="false" autocapitalize="off" autocomplete="off">{{PROFILES_JSON}}</textarea>
-      <p class="hint">The profile catalog is the recommended path for new devices. This editor remains available for compact manual profiles using the generic <code>entities</code> schema or the legacy <code>state</code>/<code>control</code> map. Up to four custom profiles. Save the JSON and reboot once to make new profile IDs available in the dropdown, then select one and save again. Leave the box empty to remove all custom profiles. Invalid JSON is rejected and the editor keeps your text. See <code>docs/tuya-device.md</code> for the schema and examples.</p>
+      <p class="hint">The base stores one active profile. It is generated from the online catalog or edited directly as JSON in the profile editor. The profile owns the state, telemetry and command mappings.</p>
+      <p><a class="button-link" href="/profiles">Open profile editor</a></p>
     </section>
 
     <section class="tab-panel" id="tab-system" data-tab-panel="system" role="tabpanel">
@@ -324,46 +312,13 @@ const char STATUS_HTML[] PROGMEM = R"HTML(<!doctype html>
   <h2>Profile</h2>
   <table class="telemetry">
     <tr><th>Active profile</th><td id="t-profile">--</td></tr>
-    <tr><th>Selected profile</th><td id="t-profile-selected">--</td></tr>
-    <tr><th>Detected profile</th><td id="t-profile-detected">--</td></tr>
-    <tr><th>Profile match</th><td id="t-profile-match">--</td></tr>
     <tr><th>Profile entities</th><td id="t-profile-entities">--</td></tr>
     <tr><th>Profile note</th><td id="t-profile-note">--</td></tr>
   </table>
 
   <h2>Device telemetry</h2>
-  <p class="muted" id="telemetry-note">Values from the selected profile.</p>
-  <div id="telemetry-dynamic" hidden>
-    <table class="telemetry" id="telemetry-table"></table>
-  </div>
-  <div id="telemetry-fixed">
-    <table class="telemetry">
-      <tr><th>Status</th><td id="t-status">--</td></tr>
-      <tr><th>Fault flags</th><td id="t-fault">--</td></tr>
-      <tr><th>Plugged</th><td id="t-plugged">--</td></tr>
-      <tr><th>Charging</th><td id="t-charging">--</td></tr>
-      <tr><th>Charge session</th><td id="t-session">--</td></tr>
-      <tr><th>Charge control (DP 124)</th><td id="t-control">--</td></tr>
-      <tr><th>Waiting for RFID</th><td id="t-rfid-wait">--</td></tr>
-      <tr><th>RFID active</th><td id="t-rfid">--</td></tr>
-      <tr><th>Schedule active</th><td id="t-schedule">--</td></tr>
-      <tr><th>Current limit</th><td id="t-current-limit">--</td></tr>
-      <tr><th>Voltage L1</th><td id="t-v1">--</td></tr>
-      <tr><th>Voltage L2</th><td id="t-v2">--</td></tr>
-      <tr><th>Voltage L3</th><td id="t-v3">--</td></tr>
-      <tr><th>Current L1</th><td id="t-a1">--</td></tr>
-      <tr><th>Current L2</th><td id="t-a2">--</td></tr>
-      <tr><th>Current L3</th><td id="t-a3">--</td></tr>
-      <tr><th>Power</th><td id="t-power">--</td></tr>
-      <tr><th>Total energy</th><td id="t-energy">--</td></tr>
-      <tr><th>Session energy</th><td id="t-session-energy">--</td></tr>
-      <tr><th>Temperature</th><td id="t-temperature">--</td></tr>
-      <tr><th>Charge time</th><td id="t-charge-time">--</td></tr>
-      <tr><th>LoRa RSSI</th><td id="t-rssi">--</td></tr>
-      <tr><th>LoRa SNR</th><td id="t-snr">--</td></tr>
-      <tr><th>Last seen</th><td id="t-age">--</td></tr>
-    </table>
-  </div>
+  <p class="muted" id="telemetry-note">Values from the active profile; raw DPs when the profile has no telemetry fields.</p>
+  <table class="telemetry" id="telemetry-table"></table>
 
   <h2>Raw DP JSON</h2>
   <details><summary>Show raw JSON</summary><pre id="dp-json">--</pre></details>
@@ -374,15 +329,6 @@ function set(id, text) { const el = $(id); if (el) el.textContent = text; }
 function fmt(value, digits, suffix) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '--';
   return Number(value).toFixed(digits) + (suffix || '');
-}
-function yesNo(value) { return value ? 'yes' : 'no'; }
-function duration(seconds) {
-  if (seconds === null || seconds === undefined || seconds < 0) return '--';
-  const s = Math.floor(seconds);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const r = s % 60;
-  return (h ? h + 'h ' : '') + (m ? m + 'm ' : '') + r + 's';
 }
 function ago(seconds) {
   if (seconds === null || seconds === undefined || seconds < 0) return '--';
@@ -504,58 +450,21 @@ async function refresh() {
     set('profile', d.profile || 'unknown');
     set('age', d.have_seen ? ago(d.age_s) : 'never');
     set('lora', d.have_seen ? d.rssi + ' dBm / ' + fmt(d.snr, 1) + ' dB' : '--');
-    set('t-status', d.have_state ? d.status : 'unknown');
-    set('t-profile', d.profile || 'unknown');
-    set('t-profile-selected', d.profile_selected || 'auto');
-    set('t-profile-detected', d.profile_detected || 'unknown');
-    set('t-profile-match', d.have_state ? yesNo(d.profile_match) : 'waiting for snapshot');
+    set('t-profile', d.profile || 'none');
     set('t-profile-entities', d.profile_entities || 0);
     set('t-profile-note', d.profile_error || 'none');
-    set('t-fault', d.have_state ? '0x' + Number(d.fault).toString(16).padStart(4, '0') : '--');
-    set('t-plugged', d.have_state ? yesNo(d.plugged) : '--');
-    set('t-charging', d.have_state ? yesNo(d.charging) : '--');
-    set('t-session', d.have_state ? yesNo(d.charge_session_enabled) : '--');
-    set('t-control', d.have_state ? yesNo(d.charge_control) : '--');
-    set('t-rfid-wait', d.have_state ? yesNo(d.waiting_for_rfid) : '--');
-    set('t-rfid', d.have_state ? yesNo(d.rfid) : '--');
-    set('t-schedule', d.have_state ? yesNo(d.schedule) : '--');
-    set('t-current-limit', d.have_state ? d.current_limit + ' A' : '--');
-    set('t-v1', d.have_state ? fmt(d.voltage_l1, 1, ' V') : '--');
-    set('t-v2', d.have_state ? fmt(d.voltage_l2, 1, ' V') : '--');
-    set('t-v3', d.have_state ? fmt(d.voltage_l3, 1, ' V') : '--');
-    set('t-a1', d.have_state ? fmt(d.current_l1, 1, ' A') : '--');
-    set('t-a2', d.have_state ? fmt(d.current_l2, 1, ' A') : '--');
-    set('t-a3', d.have_state ? fmt(d.current_l3, 1, ' A') : '--');
-    set('t-power', d.have_state ? fmt(d.power_kw, 2, ' kW') : '--');
-    set('t-energy', d.have_state ? fmt(d.energy_kwh, 2, ' kWh') : '--');
-    set('t-session-energy', d.have_state ? fmt(d.session_energy_kwh, 2, ' kWh') : '--');
-    set('t-temperature', d.have_state ? fmt(d.temperature_c, 1, ' °C') : '--');
-    set('t-charge-time', d.have_state ? duration(d.charge_seconds) : '--');
-    set('t-rssi', d.have_seen ? d.rssi + ' dBm' : '--');
-    set('t-snr', d.have_seen ? fmt(d.snr, 1, ' dB') : '--');
-    set('t-age', d.have_seen ? ago(d.age_s) : 'never');
     set('dp-json', d.dp_json || '(none)');
-    const isPack = Boolean(d.profile_pack);
-    const dynamic = $('telemetry-dynamic');
-    const fixed = $('telemetry-fixed');
-    if (dynamic) dynamic.hidden = !isPack;
-    if (fixed) fixed.hidden = isPack;
-    const note = $('telemetry-note');
-    if (note) note.textContent = isPack
-      ? 'Values from the selected browser pack; all raw DPs are available below.'
-      : 'Legacy charger telemetry for the built-in profiles.';
-    if (isPack) {
-      if (telemetryProfile !== d.profile_selected && !telemetryBusy) {
-        telemetryBusy = true;
-        try {
-          telemetryFields = await loadTelemetry();
-          telemetryProfile = d.profile_selected;
-        } finally {
-          telemetryBusy = false;
-        }
+    const profileKey = d.profile || 'none';
+    if (telemetryProfile !== profileKey && !telemetryBusy) {
+      telemetryBusy = true;
+      try {
+        telemetryFields = await loadTelemetry();
+        telemetryProfile = profileKey;
+      } finally {
+        telemetryBusy = false;
       }
-      renderTelemetry(d);
     }
+    renderTelemetry(d);
   } catch (error) {
     set('updated', 'connection lost');
   }
@@ -676,55 +585,6 @@ const FieldSpec BASE_ADVANCED_FIELDS[] = {
     {"lora_preamble", "Preamble length", "lora", FIELD_U16,
      offsetof(BaseSettings, loraPreamble), 0, 6, 65535, "1", 0, "8", nullptr},
 
-    // MQTT topics
-    {"mqtt_topic_state", "State topic", "topics", FIELD_TEXT,
-     offsetof(BaseSettings, mqttTopicState), sizeof(settings.mqttTopicState), 0,
-     0, "1", 0, MQTT_TOPIC_STATE, nullptr},
-    {"mqtt_topic_link", "LoRa link topic", "topics", FIELD_TEXT,
-     offsetof(BaseSettings, mqttTopicLink), sizeof(settings.mqttTopicLink), 0, 0,
-     "1", 0, MQTT_TOPIC_LINK, nullptr},
-    {"mqtt_topic_availability", "Availability topic", "topics", FIELD_TEXT,
-     offsetof(BaseSettings, mqttTopicAvailability),
-     sizeof(settings.mqttTopicAvailability), 0, 0, "1", 0,
-     MQTT_TOPIC_AVAILABILITY, nullptr},
-    {"mqtt_topic_result", "Command result topic", "topics", FIELD_TEXT,
-     offsetof(BaseSettings, mqttTopicResult), sizeof(settings.mqttTopicResult),
-     0, 0, "1", 0, MQTT_TOPIC_RESULT, nullptr},
-    {"mqtt_topic_debug", "Debug topic", "topics", FIELD_TEXT,
-     offsetof(BaseSettings, mqttTopicDebug), sizeof(settings.mqttTopicDebug), 0,
-     0, "1", 0, MQTT_TOPIC_DEBUG, nullptr},
-    {"mqtt_topic_dps", "Raw DP topic", "topics", FIELD_TEXT,
-     offsetof(BaseSettings, mqttTopicDps), sizeof(settings.mqttTopicDps), 0, 0,
-     "1", 0, MQTT_TOPIC_DPS, nullptr},
-    {"mqtt_topic_cmd_charge", "Charge command topic", "topics", FIELD_TEXT,
-     offsetof(BaseSettings, mqttTopicCmdCharge),
-     sizeof(settings.mqttTopicCmdCharge), 0, 0, "1", 0,
-     MQTT_TOPIC_CMD_CHARGE, nullptr},
-    {"mqtt_topic_cmd_start", "Start command topic", "topics", FIELD_TEXT,
-     offsetof(BaseSettings, mqttTopicCmdStart),
-     sizeof(settings.mqttTopicCmdStart), 0, 0, "1", 0,
-     MQTT_TOPIC_CMD_START, nullptr},
-    {"mqtt_topic_cmd_stop", "Stop command topic", "topics", FIELD_TEXT,
-     offsetof(BaseSettings, mqttTopicCmdStop),
-     sizeof(settings.mqttTopicCmdStop), 0, 0, "1", 0,
-     MQTT_TOPIC_CMD_STOP, nullptr},
-    {"mqtt_topic_cmd_current", "Current limit topic", "topics", FIELD_TEXT,
-     offsetof(BaseSettings, mqttTopicCmdCurrent),
-     sizeof(settings.mqttTopicCmdCurrent), 0, 0, "1", 0,
-     MQTT_TOPIC_CMD_CURRENT, nullptr},
-    {"mqtt_topic_cmd_delay", "Delay command topic", "topics", FIELD_TEXT,
-     offsetof(BaseSettings, mqttTopicCmdDelay),
-     sizeof(settings.mqttTopicCmdDelay), 0, 0, "1", 0,
-     MQTT_TOPIC_CMD_DELAY, nullptr},
-    {"mqtt_topic_cmd_mode", "Mode command topic", "topics", FIELD_TEXT,
-     offsetof(BaseSettings, mqttTopicCmdMode),
-     sizeof(settings.mqttTopicCmdMode), 0, 0, "1", 0,
-     MQTT_TOPIC_CMD_MODE, nullptr},
-    {"mqtt_topic_cmd_query", "Query command topic", "topics", FIELD_TEXT,
-     offsetof(BaseSettings, mqttTopicCmdQuery),
-     sizeof(settings.mqttTopicCmdQuery), 0, 0, "1", 0,
-     MQTT_TOPIC_CMD_QUERY, nullptr},
-
     // Home Assistant discovery
     {"ha_discovery_prefix", "Discovery prefix", "device", FIELD_TEXT,
      offsetof(BaseSettings, haDiscoveryPrefix),
@@ -769,43 +629,7 @@ const FieldSpec BASE_ADVANCED_FIELDS[] = {
     {"enable_commands", "Enable control commands", "control", FIELD_BOOL,
      offsetof(BaseSettings, enableCommands), 0, 0, 0, "1", 0, "enabled",
      nullptr},
-    {"min_current", "Minimum current (A)", "control", FIELD_U8,
-     offsetof(BaseSettings, minCurrent), 0, 1, 63, "1", 0, "6", nullptr},
-    {"max_current", "Maximum current (A)", "control", FIELD_U8,
-     offsetof(BaseSettings, maxCurrent), 0, 1, 63, "1", 0, "32", nullptr},
-    {"min_delay_h", "Minimum delay (h)", "control", FIELD_U8,
-     offsetof(BaseSettings, minDelayH), 0, 0, 24, "1", 0, "0", nullptr},
-    {"max_delay_h", "Maximum delay (h)", "control", FIELD_U8,
-     offsetof(BaseSettings, maxDelayH), 0, 0, 24, "1", 0, "15", nullptr},
-    {"dp_single_charge_id", "Single-phase charge DP", "control", FIELD_U16,
-     offsetof(BaseSettings, dpSingleChargeId), 0, 1, 999, "1", 0, "112",
-     nullptr},
-    {"dp_single_current_id", "Single-phase current DP", "control", FIELD_U16,
-     offsetof(BaseSettings, dpSingleCurrentId), 0, 1, 999, "1", 0, "102",
-     nullptr},
-    {"dp_single_delay_id", "Single-phase delay DP", "control", FIELD_U16,
-     offsetof(BaseSettings, dpSingleDelayId), 0, 1, 999, "1", 0, "104",
-     nullptr},
-    {"dp_single_mode_id", "Single-phase mode DP", "control", FIELD_U16,
-     offsetof(BaseSettings, dpSingleModeId), 0, 1, 999, "1", 0, "14",
-     nullptr},
-    {"dp_three_charge_id", "Three-phase charge DP", "control", FIELD_U16,
-     offsetof(BaseSettings, dpThreeChargeId), 0, 1, 999, "1", 0, "124",
-     nullptr},
-    {"dp_three_current_id", "Three-phase current DP", "control", FIELD_U16,
-     offsetof(BaseSettings, dpThreeCurrentId), 0, 1, 999, "1", 0, "115",
-     nullptr},
-    {"dp_three_delay_id", "Three-phase delay DP", "control", FIELD_U16,
-     offsetof(BaseSettings, dpThreeDelayId), 0, 1, 999, "1", 0, "118",
-     nullptr},
-    {"dp_three_mode_id", "Three-phase mode DP", "control", FIELD_U16,
-     offsetof(BaseSettings, dpThreeModeId), 0, 1, 999, "1", 0, "14", nullptr},
-    {"dp_obz2_charge_id", "OBZ2 charge DP", "control", FIELD_U16,
-     offsetof(BaseSettings, dpObz2ChargeId), 0, 1, 999, "1", 0, "124",
-     nullptr},
-    {"dp_obz2_current_id", "OBZ2 current DP", "control", FIELD_U16,
-     offsetof(BaseSettings, dpObz2CurrentId), 0, 1, 999, "1", 0, "115",
-     nullptr},
+
 
     // System
     {"web_ui_port", "Web UI port", "system", FIELD_U16,
@@ -870,30 +694,6 @@ const char *hintFor(const char *name) {
     return "Forward error correction from 4/5 to 4/8. Higher values add redundancy and airtime.";
   if (strcmp(name, "lora_preamble") == 0)
     return "Preamble symbols before each packet. Longer preambles help the receiver lock on.";
-  if (strcmp(name, "mqtt_topic_state") == 0)
-    return "Topic where the base publishes charger state JSON.";
-  if (strcmp(name, "mqtt_topic_availability") == 0)
-    return "Topic where the base publishes online and offline status.";
-  if (strcmp(name, "mqtt_topic_result") == 0)
-    return "Topic where command results and errors are published.";
-  if (strcmp(name, "mqtt_topic_debug") == 0)
-    return "Optional topic for debug messages.";
-  if (strcmp(name, "mqtt_topic_dps") == 0)
-    return "Topic where raw Tuya DP snapshots are published.";
-  if (strcmp(name, "mqtt_topic_cmd_charge") == 0)
-    return "Topic that accepts charge on/off commands.";
-  if (strcmp(name, "mqtt_topic_cmd_start") == 0)
-    return "Topic that starts a charging session.";
-  if (strcmp(name, "mqtt_topic_cmd_stop") == 0)
-    return "Topic that stops a charging session.";
-  if (strcmp(name, "mqtt_topic_cmd_current") == 0)
-    return "Topic that sets the charging current limit.";
-  if (strcmp(name, "mqtt_topic_cmd_delay") == 0)
-    return "Topic that sets the charge start delay.";
-  if (strcmp(name, "mqtt_topic_cmd_mode") == 0)
-    return "Topic that selects the charger mode.";
-  if (strcmp(name, "mqtt_topic_cmd_query") == 0)
-    return "Topic that requests an immediate DP snapshot.";
   if (strcmp(name, "ha_discovery_prefix") == 0)
     return "MQTT discovery prefix used by Home Assistant. Usually homeassistant.";
   if (strcmp(name, "ha_device_id") == 0)
@@ -920,34 +720,6 @@ const char *hintFor(const char *name) {
     return "How long the boot splash stays visible.";
   if (strcmp(name, "enable_commands") == 0)
     return "Allow MQTT commands to change charger state. Disable for read-only monitoring.";
-  if (strcmp(name, "min_current") == 0)
-    return "Lowest current the UI and Home Assistant may request.";
-  if (strcmp(name, "max_current") == 0)
-    return "Highest current the UI and Home Assistant may request. Keep within the charger rating.";
-  if (strcmp(name, "min_delay_h") == 0)
-    return "Lowest charge start delay allowed.";
-  if (strcmp(name, "max_delay_h") == 0)
-    return "Highest charge start delay allowed.";
-  if (strcmp(name, "dp_single_charge_id") == 0)
-    return "Tuya DP ID for single-phase charge on/off.";
-  if (strcmp(name, "dp_single_current_id") == 0)
-    return "Tuya DP ID for single-phase current limit.";
-  if (strcmp(name, "dp_single_delay_id") == 0)
-    return "Tuya DP ID for single-phase start delay.";
-  if (strcmp(name, "dp_single_mode_id") == 0)
-    return "Tuya DP ID for single-phase mode.";
-  if (strcmp(name, "dp_three_charge_id") == 0)
-    return "Tuya DP ID for three-phase charge on/off.";
-  if (strcmp(name, "dp_three_current_id") == 0)
-    return "Tuya DP ID for three-phase current limit.";
-  if (strcmp(name, "dp_three_delay_id") == 0)
-    return "Tuya DP ID for three-phase start delay.";
-  if (strcmp(name, "dp_three_mode_id") == 0)
-    return "Tuya DP ID for three-phase mode.";
-  if (strcmp(name, "dp_obz2_charge_id") == 0)
-    return "Tuya DP ID for OBZ2 charge on/off.";
-  if (strcmp(name, "dp_obz2_current_id") == 0)
-    return "Tuya DP ID for OBZ2 current limit.";
   if (strcmp(name, "web_ui_port") == 0)
     return "HTTP port for this settings page. After changing it, reconnect on the new port.";
   if (strcmp(name, "wifi_setup_fallback_ms") == 0)
@@ -1273,7 +1045,7 @@ void sendResult(const String &title, const String &detail) {
 }
 
 void renderForm(const BaseSettings &s, const String &error, int status,
-                const String &tab, const char *customJson = nullptr) {
+                const String &tab) {
   String page = FPSTR(BASE_HTML);
   page.replace("{{FW_VERSION}}", FW_VERSION);
   page.replace("{{IP}}", ipText());
@@ -1296,7 +1068,6 @@ void renderForm(const BaseSettings &s, const String &error, int status,
   page.replace("{{HA_NAME}}", htmlEscape(s.haName));
   page.replace("{{TIMEZONE_OPTIONS}}", timezoneOptions(s));
   page.replace("{{FIELDS_MQTT}}", renderFields(s, "mqtt"));
-  page.replace("{{FIELDS_TOPICS}}", renderFields(s, "topics"));
   page.replace("{{FIELDS_LORA}}", renderFields(s, "lora"));
   page.replace("{{FIELDS_HA}}", renderFields(s, "device"));
   page.replace("{{FIELDS_TIMING}}", renderFields(s, "timing"));
@@ -1307,21 +1078,13 @@ void renderForm(const BaseSettings &s, const String &error, int status,
                "leave blank to keep current");
   page.replace("{{SETUP_AP_CHANNEL_OPTIONS}}", setupApChannelOptions(s));
   page.replace("{{PROFILE_ACTIVE}}", htmlEscape(profileActiveId()));
-  page.replace("{{PROFILE_DETECTED}}", htmlEscape(profileDetectedId()));
-  page.replace("{{PROFILE_MATCH}}",
-               !haveState ? "waiting for snapshot"
-                          : (profileMatched ? "yes" : "no"));
+  page.replace("{{PROFILE_TYPE}}", htmlEscape(browserProfileDeviceType()));
+  page.replace("{{PROFILE_ENTITIES}}", String(profileEntityCount()));
   if (profileError[0]) {
     page.replace("{{PROFILE_NOTE}}", htmlEscape(profileError));
   } else {
     page.replace("{{PROFILE_NOTE}}", "none");
   }
-  page.replace("{{PROFILE_OPTIONS}}", profileOptions(s.profileId));
-  page.replace("{{PROFILE_ENTITIES}}", String(profileEntityCount()));
-  // Keep the JSON replacement last so profile text cannot be expanded as a
-  // template placeholder.
-  page.replace("{{PROFILES_JSON}}",
-               htmlEscape(customJson ? customJson : profilesCustomJson()));
   server->sendHeader("Cache-Control", "no-store");
   server->send(status, "text/html", page);
 }
@@ -1405,13 +1168,7 @@ void handleApiStatus() {
   json += String(lastStatus.chargeSeconds);
   json += ",\"profile\":\"";
   json += jsonEscape(profileActiveId());
-  json += "\",\"profile_selected\":\"";
-  json += jsonEscape(settings.profileId);
-  json += "\",\"profile_detected\":\"";
-  json += jsonEscape(profileDetectedId());
-  json += "\",\"profile_match\":";
-  json += (profileMatched ? "true" : "false");
-  json += ",\"profile_entities\":";
+  json += "\",\"profile_entities\":";
   json += String(profileEntityCount());
   json += ",\"profile_pack\":";
   json += (browserProfileSelected() ? "true" : "false");
@@ -1509,16 +1266,6 @@ bool validate(const BaseSettings &s, String &error, String &tab) {
     tab = "system";
     return false;
   }
-  if (s.minCurrent > s.maxCurrent) {
-    error = "Minimum current cannot be greater than maximum current.";
-    tab = "control";
-    return false;
-  }
-  if (s.minDelayH > s.maxDelayH) {
-    error = "Minimum delay cannot be greater than maximum delay.";
-    tab = "control";
-    return false;
-  }
   return true;
 }
 
@@ -1529,10 +1276,6 @@ void handleSave() {
   }
 
   BaseSettings next = settings;
-  copyArg("profile_id", next.profileId, sizeof(next.profileId), false);
-  const String customJson = server->hasArg("profiles_json")
-                                ? server->arg("profiles_json")
-                                : String(profilesCustomJson());
   copyArg("wifi_ssid", next.wifiSsid, sizeof(next.wifiSsid), false);
   copyArg("wifi_password", next.wifiPassword, sizeof(next.wifiPassword), true);
   if (server->hasArg("clear_wifi_password")) next.wifiPassword[0] = '\0';
@@ -1544,8 +1287,7 @@ void handleSave() {
 
   const long port = server->arg("mqtt_port").toInt();
   if (port < 1 || port > 65535) {
-    renderForm(next, "MQTT port must be between 1 and 65535.", 400, "mqtt",
-               customJson.c_str());
+    renderForm(next, "MQTT port must be between 1 and 65535.", 400, "mqtt");
     return;
   }
   next.mqttPort = static_cast<uint16_t>(port);
@@ -1560,7 +1302,7 @@ void handleSave() {
   const long apChannel = server->arg("setup_ap_channel").toInt();
   if (apChannel < 1 || apChannel > 13) {
     renderForm(next, "Setup AP channel must be between 1 and 13.", 400,
-               "system", customJson.c_str());
+               "system");
     return;
   }
   next.setupApChannel = static_cast<uint8_t>(apChannel);
@@ -1568,32 +1310,17 @@ void handleSave() {
   String error;
   String tab = "system";
   if (!applyAdvancedFields(next, error, tab)) {
-    renderForm(next, error, 400, tab, customJson.c_str());
+    renderForm(next, error, 400, tab);
     return;
   }
   if (!validate(next, error, tab)) {
-    renderForm(next, error, 400, tab, customJson.c_str());
-    return;
-  }
-  if (!profilesValidateCustomJson(customJson.c_str(), error)) {
-    renderForm(next, String("Custom profiles: ") + error, 400, "profile",
-               customJson.c_str());
-    return;
-  }
-  if (!profilesSelectionValid(next.profileId, customJson.c_str(), error)) {
-    renderForm(next, error, 400, "profile", customJson.c_str());
+    renderForm(next, error, 400, tab);
     return;
   }
 
   settings = next;
   if (!saveSettings()) {
-    renderForm(next, "Could not write settings to NVS.", 500, tab,
-               customJson.c_str());
-    return;
-  }
-  if (!profilesSaveCustomToNvs(customJson.c_str(), error)) {
-    renderForm(next, String("Could not save custom profiles: ") + error, 500,
-               "profile", customJson.c_str());
+    renderForm(next, "Could not write settings to NVS.", 500, tab);
     return;
   }
   bootGuardClear();
@@ -1607,7 +1334,6 @@ void handleSave() {
 void handleFactory() {
   bootGuardClear();
   clearSettings();
-  profilesClearCustom();
   sendResult("Factory reset",
              "All settings were cleared. The base is rebooting into setup mode "
              "at http://192.168.4.1:" + String(settings.webUiPort) + "/.");
@@ -1654,27 +1380,42 @@ void handleProfileMapping() {
   server->send_P(200, "application/javascript", PROFILE_MAPPING_JS);
 }
 
-void handleProfileOffline() {
-  addProfileCors();
-  server->sendHeader("Cache-Control", "no-store");
-  server->send_P(200, "application/json", OFFLINE_CHARGERS_JSON);
-}
-
 void handleProfileTelemetry() {
   addProfileCors();
   server->sendHeader("Cache-Control", "no-store");
   server->send(200, "application/json", browserProfileTelemetryJson());
 }
 
+void handleProfileExport() {
+  String meta;
+  if (!browserProfileMetaJson(meta)) {
+    server->send(204, "text/plain", "");
+    return;
+  }
+  addProfileCors();
+  server->sendHeader("Cache-Control", "no-store");
+  server->setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server->send(200, "text/plain", "");
+  server->sendContent(meta);
+  server->sendContent("\n", 1);
+  for (size_t i = 0; i < browserProfileDiscoveryCount(); ++i) {
+    String item;
+    if (!browserProfileItemJson(i, item)) continue;
+    server->sendContent(item);
+    server->sendContent("\n", 1);
+  }
+  server->sendContent("", 0);
+  server->setContentLength(CONTENT_LENGTH_NOT_SET);
+}
+
 void handleProfileInfo() {
   JsonDocument doc;
   doc["ha_name"] = settings.haName;
   doc["ha_device_id"] = settings.haDeviceId;
-  doc["state_topic"] = settings.mqttTopicDps;
+  doc["state_topic"] = mqttTopicDps();
   doc["command_topic"] = browserProfileCommandTopic();
   doc["raw_entity_id"] = browserProfileRawEntityId();
-  doc["availability_topic"] = settings.mqttTopicAvailability;
-  doc["selection"] = settings.profileId;
+  doc["availability_topic"] = mqttTopicAvailability();
   doc["pack_loaded"] = browserProfileLoaded();
   if (browserProfileLoaded()) {
     JsonObject pack = doc["pack"].to<JsonObject>();
@@ -1801,7 +1542,7 @@ void webUiBegin() {
   server->on("/profile_converter.mjs", HTTP_GET, handleProfileConverter);
   server->on("/profile_mapping.mjs", HTTP_GET, handleProfileMapping);
   server->on("/api/profile/info", HTTP_GET, handleProfileInfo);
-  server->on("/api/profile/offline", HTTP_GET, handleProfileOffline);
+  server->on("/api/profile/export", HTTP_GET, handleProfileExport);
   server->on("/api/profile/telemetry", HTTP_GET, handleProfileTelemetry);
   server->on("/api/profile/save", HTTP_POST, handleProfileSave, handleProfileRaw);
   server->on("/api/profile/save", HTTP_OPTIONS, handleProfileOptions);

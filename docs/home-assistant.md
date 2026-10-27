@@ -9,14 +9,13 @@ discovery configs. No custom integration is required.
 
 | Topic | Retain | Payload |
 |---|---|---|
-| `tuya-lora/charger/state` | yes | mapped state JSON |
-| `tuya-lora/charger/state/entities/e0` … `e9` | yes | per-entity JSON for legacy custom generic profiles |
-| `tuya-lora/charger/link` | yes | LoRa link diagnostics |
-| `tuya-lora/charger/dps` | yes | raw Tuya DP snapshot |
-| `tuya-lora/charger/dps/<dp-id>` | yes | per-DP value, published in browser-pack mode |
-| `tuya-lora/charger/availability` | yes | `online` / `offline` |
-| `tuya-lora/charger/command/result` | no | command result JSON |
-| `tuya-lora/charger/debug` | no | profile and snapshot summary |
+| `tuya-lora/<slug>/state` | yes | mapped state JSON for diagnostics |
+| `tuya-lora/<slug>/link` | yes | LoRa link diagnostics |
+| `tuya-lora/<slug>/dps` | yes | raw Tuya DP snapshot |
+| `tuya-lora/<slug>/dps/<dp-id>` | yes | per-DP value, published in browser-pack mode |
+| `tuya-lora/<slug>/availability` | yes | `online` / `offline` |
+| `tuya-lora/<slug>/command/result` | no | command result JSON |
+| `tuya-lora/<slug>/debug` | no | profile and snapshot summary |
 
 Example `state`:
 
@@ -43,11 +42,8 @@ Example `state`:
   "session_energy": 1.23,
   "temperature": 31.2,
   "charge_seconds": 3600,
-  "profile": "3-phase",
-  "profile_selected": "auto",
-  "profile_detected": "3-phase",
-  "profile_match": true,
-  "profile_entities": 0,
+  "profile": "feyree_43_evcharger",
+  "profile_entities": 22,
   "delay_hours": 0
 }
 ```
@@ -74,44 +70,27 @@ snapshot arrives.
 
 Profile fields:
 
-- `profile` is the active profile ID: a built-in ID, a custom ID, `fallback`, or
-  `unknown` before the first snapshot.
-- `profile_selected` is the NVS selection: `auto`, a built-in ID or a custom ID.
-- `profile_detected` is what auto-detection would choose from the last snapshot.
-- `profile_match` is `true` when the active profile matches that snapshot.
-- `profile_entities` is the number of discovery entities in the active browser
-  pack, or the number of generic entities in a legacy custom profile.
-- `profile_error` is present when the active profile is the fallback or a manual
-  profile does not match.
+- `profile` is the active profile ID, or `none` before a profile is saved.
+- `profile_entities` is the number of discovery entities in the active profile.
+- `profile_error` is present when no profile is loaded or no DP snapshot has
+  been seen.
 
-Built-in IDs are `single-phase`, `3-phase` and `F-OBZ2`; custom IDs come from the
-Profile tab JSON. The internal `fallback` profile is read-only. Control is
-rejected whenever `profile_match` is false.
-
-`delay_hours` is the last reported delay from the active profile's delay DP (DP
-`104` for single-phase, DP `118` for three-phase, or the legacy custom field).
-It can be `0` when the profile does not expose a delay.
+`delay_hours` is the last reported delay from the active profile's delay DP. It
+can be `0` when the profile does not expose a delay.
 
 ### Commands published to the base
 
 | Topic | Payload |
 |---|---|
-| `tuya-lora/charger/command/charge` | `ON` / `OFF` |
-| `tuya-lora/charger/command/start` | any payload; starts charging |
-| `tuya-lora/charger/command/stop` | any payload; stops charging |
-| `tuya-lora/charger/command/current_limit` | number, for example `16` |
-| `tuya-lora/charger/command/delay` | hours, `0`–`15` |
-| `tuya-lora/charger/command/mode` | `charge_now` / `charge_schedule` |
-| `tuya-lora/charger/command/dp` | JSON DP fragment from a browser-pack command template |
-| `tuya-lora/charger/command/generic/e0` … `e9` | entity-specific value for legacy custom generic profiles |
-| `tuya-lora/charger/command/query` | any payload; requests a fresh snapshot |
+| `tuya-lora/<slug>/command/dp` | JSON DP fragment from a profile command template |
+| `tuya-lora/<slug>/command/query` | any payload; requests a fresh snapshot |
 
-The base maps a command to the detected profile's DP IDs, sends a LoRa
-`DP_SET`, waits for the remote ACK, and publishes:
+The base sends the fragment as a LoRa `DP_SET`, waits for the remote ACK, and
+publishes:
 
 ```json
 {
-  "command": "charge",
+  "command": "pack",
   "result": "ok",
   "ok": true,
   "ts": "2026-10-22T14:32:08+03:00"
@@ -129,81 +108,33 @@ Result values:
 - `timeout`
 - `send_failed`
 
-Control is accepted only after the base has received a valid DP snapshot and
-the active profile matches it. The internal fallback profile is read-only. A
-command is rejected while another command or a snapshot is in progress. The
-remote does not validate DP semantics; it only forwards the fragment to Tuya
-after an authenticated LoRa frame.
+Control is accepted only after a profile is loaded and the base has received a
+valid DP snapshot. A command is rejected while another command or a snapshot is
+in progress. The remote does not validate DP semantics; it only forwards the
+fragment to Tuya after an authenticated LoRa frame.
 
 ### Browser pack entities
 
 A browser pack does not use per-entity state topics. It publishes precompiled
 Home Assistant discovery configs; the templates read the raw snapshot at
-`tuya-lora/charger/dps` and command templates publish a JSON `dps` fragment to
-`tuya-lora/charger/command/dp`.
+`tuya-lora/<slug>/dps` and command templates publish a JSON `dps` fragment to
+`tuya-lora/<slug>/command/dp`.
 
 The base also publishes:
 
 - a hidden **Raw DPs** sensor at `sensor.<ha-name>_pack_raw`, with the complete
   `dps` map in its `dps` attribute;
-- per-DP retained topics under `tuya-lora/charger/dps/<dp-id>`, used by the
+- per-DP retained topics under `tuya-lora/<slug>/dps/<dp-id>`, used by the
   camera image entity and available to automations.
 
-The object IDs are generated from the pack entity position, with a `pack_`
-prefix. Examples:
+Object IDs are derived from the entity name, lowercased with underscores, and
+prefixed with `pack_` on the base. Examples:
 
 ```text
-homeassistant/light/tuya_lora_bridge/pack_e0/config
-homeassistant/climate/tuya_lora_bridge/pack_e1/config
+homeassistant/sensor/tuya_lora_bridge/pack_status/config
+homeassistant/number/tuya_lora_bridge/pack_charge_current/config
 homeassistant/sensor/tuya_lora_bridge/pack_raw/config
 ```
-
-### Legacy custom generic entities
-
-A legacy custom profile with an `entities` list still uses per-entity state and
-command topics:
-
-- one discovery config under
-  `<discovery-prefix>/<component>/<ha-device-id>/profile_eN/config`;
-- one retained state object under `tuya-lora/charger/state/entities/eN`;
-- for writable entities, a command topic
-  `tuya-lora/charger/command/generic/eN`.
-
-`eN` is the entity's zero-based position in the descriptor and is stable as long
-as the entity order is unchanged. Suggested entity IDs use
-`tuya_<device-name>_profile_eN`, for example
-`sensor.tuya_charger_profile_e0`. The friendly name comes from the descriptor.
-This path is retained for manual profiles; new devices should use the browser
-catalog.
-
-| Entity type | State | Command payload |
-|---|---|---|
-| `sensor` | numeric or mapped value | none |
-| `binary_sensor` | `ON` / `OFF` | none |
-| `switch` | `ON` / `OFF` | `ON` / `OFF` |
-| `number` | numeric value | number in display units |
-| `select` | option string | one of the advertised options |
-| `button` | none | `PRESS` |
-| `text` | string | string |
-
-The state object contains the primary DP plus any non-hidden extra DPs. For
-example, a status sensor with a fault code and description can expose all three
-as state plus attributes:
-
-```json
-{
-  "sensor": "waiting_for_authorization",
-  "fault_code": 0,
-  "description": "Ready"
-}
-```
-
-Generic commands are accepted only when `profile_match` is `true`. If commands
-are disabled in the web UI, writable generic entities are published as read-only
-sensors and buttons are omitted. Built-in and legacy custom profiles keep their
-existing entity IDs and the fixed charger topics. The LoRa link diagnostic
-entities (`link_age`, `rssi`, `snr`, `last_seen`) are published in both legacy
-and generic modes.
 
 ## MQTT discovery
 
@@ -216,29 +147,14 @@ The base publishes retained discovery topics under:
 The default discovery prefix is `homeassistant`. Example topics:
 
 ```text
-homeassistant/sensor/tuya_lora_bridge/status/config
-homeassistant/sensor/tuya_lora_bridge/power/config
-homeassistant/sensor/tuya_lora_bridge/energy/config
 homeassistant/sensor/tuya_lora_bridge/rssi/config
-homeassistant/binary_sensor/tuya_lora_bridge/plugged/config
-homeassistant/number/tuya_lora_bridge/current_limit/config
-homeassistant/switch/tuya_lora_bridge/charge_control/config
-```
-
-Browser pack entities use `pack_eN` object IDs; legacy custom generic entities
-use `profile_eN`:
-
-```text
-homeassistant/light/tuya_lora_bridge/pack_e0/config
-homeassistant/climate/tuya_lora_bridge/pack_e1/config
+homeassistant/sensor/tuya_lora_bridge/pack_status/config
+homeassistant/number/tuya_lora_bridge/pack_charge_current/config
 homeassistant/sensor/tuya_lora_bridge/pack_raw/config
-homeassistant/sensor/tuya_lora_bridge/profile_e0/config
 ```
 
-When the active profile changes, the base clears discovery configs for stale
-pack/custom slots and republishes the new set. Legacy built-in discovery topics
-are cleared while a pack or custom profile is active, and restored when a
-built-in profile becomes active again.
+When the active profile changes, the base clears stale profile discovery and
+republishes the new set.
 
 Common device block:
 
@@ -275,49 +191,30 @@ Examples:
 
 ## Entities
 
-### Monitoring
-
-| Entity | Unit / class | Source |
-|---|---|---|
-| `sensor.tuya_<name>_status` | enum | `state.status` |
-| `sensor.tuya_<name>_power` | kW, power | `state.power` |
-| `sensor.tuya_<name>_energy` | kWh, energy, total increasing | `state.energy` |
-| `sensor.tuya_<name>_session_energy` | kWh, energy | `state.session_energy` |
-| `sensor.tuya_<name>_voltage_l1/l2/l3` | V, voltage | phase voltages |
-| `sensor.tuya_<name>_current_l1/l2/l3` | A, current | phase currents |
-| `sensor.tuya_<name>_temperature` | °C, temperature | `state.temperature` |
-| `sensor.tuya_<name>_charge_duration` | s, duration | `state.charge_seconds` |
-| `sensor.tuya_<name>_fault_code` | raw bitfield | `state.fault` |
-| `binary_sensor.tuya_<name>_plugged` | plug | `state.plugged` |
-| `binary_sensor.tuya_<name>_charging` | running | `state.charging` |
-| `binary_sensor.tuya_<name>_fault` | problem | `state.fault > 0` |
-| `binary_sensor.tuya_<name>_rfid_active` | occupancy | `state.rfid` |
-| `binary_sensor.tuya_<name>_schedule` | — | `state.schedule` |
+Entity IDs and entity types come from the active profile. The profile editor
+shows the generated discovery entries; the raw DP sensor is always available.
+The link diagnostics below are published by the base for every profile.
 
 ### Link diagnostics
 
 | Entity | Unit / class | Source topic |
 |---|---|---|
-| `sensor.tuya_<name>_rssi` | dBm, signal strength | `tuya-lora/charger/link` |
-| `sensor.tuya_<name>_snr` | dB | `tuya-lora/charger/link` |
-| `sensor.tuya_<name>_link_age` | s, duration | `tuya-lora/charger/link` |
-| `sensor.tuya_<name>_last_seen` | timestamp | `tuya-lora/charger/link` |
+| `sensor.tuya_<name>_rssi` | dBm, signal strength | `tuya-lora/<slug>/link` |
+| `sensor.tuya_<name>_snr` | dB | `tuya-lora/<slug>/link` |
+| `sensor.tuya_<name>_link_age` | s, duration | `tuya-lora/<slug>/link` |
+| `sensor.tuya_<name>_last_seen` | timestamp | `tuya-lora/<slug>/link` |
 
 These entities work independently of the device state. They show whether the
 LoRa link is alive even when the Tuya device is unreachable.
 
 ### Control
 
-Control entities are published when `ENABLE_COMMANDS` is `1` in
-`base-node/config.h`.
-
-| Entity | Type | Topic |
-|---|---|---|
-| `switch.tuya_<name>_charge_control` | switch | `command/charge` |
-| `button.tuya_<name>_charge_enable` | button | `command/start` |
-| `button.tuya_<name>_charge_disable` | button | `command/stop` |
-| `number.tuya_<name>_current_limit` | number | `command/current_limit` |
-| `number.tuya_<name>_charge_delay` | number | `command/delay` |
+Controls are defined by the active profile's discovery entries and command
+templates. A typical charger profile exposes a charge current number, charge
+delay/duration numbers and start/stop buttons. Their entity IDs use the
+`tuya_<device-name>_pack_<entity-name>` prefix (for example
+`number.tuya_carcharger_pack_charge_current`) and are listed in the profile
+JSON.
 
 ### Status values
 
@@ -359,7 +256,7 @@ on or press **Enable charging**.
 Two layers control availability:
 
 1. **Base node alive:** MQTT Last Will and Testament sets
-   `tuya-lora/charger/availability` to `offline` if the base disconnects.
+   `tuya-lora/<slug>/availability` to `offline` if the base disconnects.
 2. **Remote link alive:** the base marks the remote link offline after 10
    minutes without a valid LoRa frame and publishes `offline`. The next valid
    frame publishes `online`.
@@ -517,8 +414,8 @@ entry for `sensor.tuya_charger_energy`.
 
 ```bash
 mosquitto_sub -v -t 'tuya-lora/#'
-mosquitto_pub -t tuya-lora/charger/command/query -m query
-mosquitto_sub -v -t tuya-lora/charger/dps
+mosquitto_pub -t tuya-lora/<slug>/command/query -m query
+mosquitto_sub -v -t tuya-lora/<slug>/dps
 mosquitto_sub -v -t 'homeassistant/+/tuya_lora_bridge/+/config'
 ```
 
@@ -538,4 +435,4 @@ If discovery entities do not appear, check:
 - The LoRa PSK and Tuya local key are stored in NVS and configured through the
   node web UI.
 - The web UI is unauthenticated; keep it on a trusted network.
-- Treat `tuya-lora/charger/command/*` as privileged.
+- Treat `tuya-lora/<slug>/command/*` as privileged.

@@ -130,12 +130,11 @@ the nodes on trusted networks.
 |---|---|
 | WiFi | Home WiFi SSID/password and network scan |
 | MQTT | Broker host, port, username, password, keepalive, socket timeout and buffer size. Use at least 8192 bytes for browser packs; larger discovery configs are single MQTT messages. |
-| Topics | State, link, availability, result, debug, raw DP and command topics |
 | LoRa | PSK (32 hex characters), frequency, sync word, TX power, spreading factor, bandwidth, coding rate and preamble |
 | Home Assistant | Device name, timezone, discovery prefix and stable device identifier |
 | Timing | Offline timeout, snapshot/chunk timeouts, retry intervals, WiFi/MQTT reconnect intervals and display timings |
-| Control | Command enable, current/delay limits and legacy DP overrides for built-in profiles |
-| Profile | Auto-detect or manual profile selection, live detected/active/match status, a link to the browser profile catalog at `/profiles`, and the legacy custom profile JSON editor. The status page shows a profile-driven **Device telemetry** table for browser packs. |
+| Control | Command enable. Command DPs and value ranges come from the active profile. |
+| Profile | The single active profile, its type/entity count and a link to `/profiles`. The profile editor loads a device from the online catalog, shows the generated profile JSON in an editable textarea, and saves it to the base. |
 | System | Setup AP credentials, web UI port, SD firmware filename and SD update countdown |
 
 ### Remote node settings
@@ -157,22 +156,19 @@ If validation fails, the form reopens on the tab containing the error. The LoRa
 PSK must be identical on both nodes. Changing the device AP SSID or password
 requires re-pairing the Tuya device.
 
-The browser profile catalog is the primary path for new devices. Open
-`/profiles`, choose a descriptor from the online tuya-local catalog or the
-offline charger catalog, preview it, and save it. The base streams the pack as
-NDJSON and stores metadata plus one small discovery file per entity in
-LittleFS. It supports all tuya-local entity types; native MQTT platforms are
-used where they exist, and media players/remotes/infrared are decomposed into
-standard MQTT entities. A hidden **Raw DPs** sensor exposes every DP as an
-attribute, and the base publishes per-DP topics under the raw snapshot topic.
+The profile editor is the single path for new devices. Open `/profiles`, choose
+a descriptor from the online tuya-local catalog or paste/edit a profile JSON,
+then save it. The base streams the pack as NDJSON and stores metadata plus one
+small discovery file per entity in LittleFS. It supports all tuya-local entity
+types; native MQTT platforms are used where they exist, and
+media players/remotes/infrared are decomposed into standard MQTT entities. A
+hidden **Raw DPs** sensor exposes every DP as an attribute, and the base
+publishes per-DP topics under the raw snapshot topic.
 
-The three built-in profiles (`3-phase`, `single-phase`, `F-OBZ2`) keep their
-legacy state/control model and stable entity IDs. The **Control** tab DP ID
-fields override only the outgoing command DPs for those built-ins. The legacy
-custom JSON editor remains for compact manual `state`/`control` or `entities`
-profiles; it is limited to four profiles and 8192 bytes and is no longer the
-recommended path. Invalid custom JSON is rejected without replacing the last
-valid profile set.
+There are no built-in or separately stored custom profiles. The JSON in the
+editor is the one active profile; its telemetry, discovery entries and command
+templates are all editable. Invalid profile JSON is rejected without replacing
+the last valid profile.
 
 ### Setup AP recovery
 
@@ -210,46 +206,43 @@ mapping lives on the base node and can be changed without reflashing the remote.
 
 1. Joins the home WiFi and connects to MQTT. Serves the status page at its
    home-WiFi address and settings at `/settings`.
-2. Publishes retained Home Assistant discovery configs for the selected profile.
-   Built-in profiles use the legacy charger entities. Browser packs publish the
-   precompiled discovery configs from LittleFS and a hidden Raw DPs sensor.
+2. Publishes retained Home Assistant discovery configs for the active profile
+   from LittleFS and a hidden Raw DPs sensor.
 3. Listens for LoRa frames using the configured radio settings.
 4. Verifies the AES-GCM tag and rejects duplicate or old sequence numbers per
    remote boot ID.
 5. Sends `DP_QUERY` every 60 seconds, reassembles chunks, and publishes the raw
-   snapshot to retained `tuya-lora/charger/dps`.
-6. Detects the DP profile, or uses the manually selected profile, maps it to the
-   legacy state topic; browser-pack entities read the raw DP snapshot and the
-   Raw DPs sensor attributes, then the base publishes retained availability.
-7. Publishes `tuya-lora/charger/link` on every valid LoRa frame and every
+   snapshot to retained `tuya-lora/<slug>/dps`.
+6. Publishes the raw DP snapshot and per-DP topics; profile entities read the
+   raw DP snapshot and the Raw DPs sensor attributes, then the base publishes
+   retained availability.
+7. Publishes `tuya-lora/<slug>/link` on every valid LoRa frame and every
    10 seconds while the remote link is online, so RSSI, SNR and last-seen data
    are available before the device itself is reachable.
-8. Maps legacy MQTT commands to the active built-in profile, forwards browser
-   pack command templates through the generic DP command topic, sends `DP_SET`,
-   and publishes the result to `tuya-lora/charger/command/result`.
-9. Rejects control when the active profile is the read-only fallback or when the
-   selected profile does not match the last snapshot.
+8. Forwards profile-pack command templates through the generic DP command topic,
+   sends `DP_SET`, and publishes the result to
+   `tuya-lora/<slug>/command/result`.
+9. Rejects control when no profile is loaded or no DP snapshot has been seen.
 10. Marks the remote link offline after 10 minutes without a valid frame.
 11. Turns the OLED panel off 10 minutes after boot to reduce burn-in.
 
 The base status page shows link/profile tiles and a profile-driven **Device
 telemetry** table; packs without telemetry metadata fall back to raw DPs. The
-OLED shows device readiness (`available`/`mismatch`/`unknown`) and the active
-profile name instead of charger-only status/power rows.
+OLED shows device readiness (`available`/`unknown`) and the active profile name
+instead of charger-only status/power rows.
 
 The base node is normally a WiFi station. It creates an AP only for initial
 configuration or when the configured WiFi is unreachable.
 
-Control is accepted only after the base has received a valid snapshot and the
-active profile matches that snapshot. The internal fallback profile is read-only,
-so an unrecognized device is monitored but not controlled. A command is rejected
-while another command or a snapshot is in progress. A command timeout is not
-retried automatically because the command may already have been applied.
+Control is accepted only after a profile is loaded and the base has received a
+valid snapshot. A command is rejected while another command or a snapshot is in
+progress. A command timeout is not retried automatically because the command may
+already have been applied.
 
 ## OLED and serial output
 
-The base OLED shows WiFi/MQTT state, the remote LoRa link, the actual charger
-state, power, RSSI/SNR, last packet time and the node IP. The remote OLED shows
+The base OLED shows WiFi/MQTT state, the remote LoRa link, device availability,
+the active profile, RSSI/SNR, last packet time and the node IP. The remote OLED shows
 the AP, device discovery, Tuya connection, snapshot activity and LoRa status.
 
 Both sketches print boot diagnostics and frame/connection events to the serial

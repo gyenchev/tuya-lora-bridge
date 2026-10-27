@@ -73,10 +73,10 @@ interrupts its mains supply.
   reassembles chunks, and acknowledges the chunk bitmap.
 - Detects the DP profile, or uses the manual profile selected in NVS, maps it to
   a stable state model, and publishes the raw snapshot to retained
-  `tuya-lora/charger/dps`.
-- Publishes retained `tuya-lora/charger/state`, `tuya-lora/charger/link` and
-  `tuya-lora/charger/availability` topics.
-- Stores the three built-in Feyree/F-OBZ2 fallback profiles and one active
+  `tuya-lora/<slug>/dps`.
+- Publishes retained `tuya-lora/<slug>/state`, `tuya-lora/<slug>/link` and
+  `tuya-lora/<slug>/availability` topics.
+- Stores one active browser profile and an internal read-only fallback map
   browser-generated profile pack. A browser pack is precompiled discovery plus
   command templates; the remote stays a raw DP proxy.
 - The browser converts any tuya-local descriptor into a pack using native MQTT
@@ -91,7 +91,7 @@ interrupts its mains supply.
   and one retained per-DP topic under the raw snapshot topic. Every DP remains
   available even when a platform cannot express it natively.
 - Subscribes to the generic DP command topic. Command templates emit a JSON
-  `dps` fragment, which the base forwards to `DP_SET`; legacy built-in commands
+  `dps` fragment, which the base forwards to `DP_SET`.
   are mapped by the base. Control is rejected when the selected pack does not
   match the last snapshot.
 - Publishes precompiled Home Assistant MQTT discovery configs from the pack and
@@ -115,29 +115,27 @@ link diagnostics for monitoring, notifications and slow charging control.
 2. The remote calls `tuya.query()` and returns the raw JSON in `DP_CHUNK`
    frames.
 3. The base reassembles chunks, sends `DP_ACK`, and requests missing chunks.
-4. The base publishes the raw snapshot to `tuya-lora/charger/dps` (retained).
-5. The base resolves the active profile (`auto` detection or the manual NVS
-   selection). Built-in profiles publish the legacy
-   `tuya-lora/charger/state` model. Browser packs publish their precompiled
-   discovery configs, a hidden Raw DPs sensor, and retained per-DP topics under
-   the raw snapshot topic. Pack entities read the raw snapshot directly.
-6. The base publishes `tuya-lora/charger/link` diagnostics on every valid LoRa
+4. The base publishes the raw snapshot to `tuya-lora/<slug>/dps` (retained).
+5. The base resolves the active profile from LittleFS. It publishes the
+   profile's precompiled discovery configs, a hidden Raw DPs sensor, and
+   retained per-DP topics under the raw snapshot topic. Profile entities read
+   the raw snapshot directly.
+6. The base publishes `tuya-lora/<slug>/link` diagnostics on every valid LoRa
    frame, independent of the device snapshot.
 7. The base publishes availability `online`; Home Assistant updates the
    entities.
 
 ### Command: Home Assistant → device
 
-1. Home Assistant publishes legacy commands to
-   `tuya-lora/charger/command/charge`, `start`, `stop`, `current_limit`,
-   `delay`, `mode` or `query`, or a browser-pack command template to
-   `tuya-lora/charger/command/dp`.
-2. The base validates the command and the active profile. Legacy commands are
-   mapped by the built-in profile; pack commands are already JSON `dps`
-   fragments. The base sends `DP_SET` with a new sequence number.
+1. Home Assistant publishes a profile command template to
+   `tuya-lora/<slug>/command/dp`, or a snapshot request to
+   `tuya-lora/<slug>/command/query`.
+2. The base validates the command and active profile. The profile command is
+   already a JSON `dps` fragment. The base sends `DP_SET` with a new sequence
+   number.
 3. The remote verifies the frame and passes the fragment to `tuya.setDps()`.
 4. The remote replies with `ACK` and a result code.
-5. The base publishes the result to `tuya-lora/charger/command/result` and
+5. The base publishes the result to `tuya-lora/<slug>/command/result` and
    schedules a fresh snapshot.
 6. A command timeout is reported to MQTT and is not retried automatically.
 
@@ -233,7 +231,7 @@ snapshot of up to 2560 bytes in 80-byte chunks, plus short control fragments.
 
 - The device owns safety. The bridge cannot bypass RCD/RCBO, control-pilot
   checks or fault handling.
-- Every command is validated against the detected profile and configured limits.
+- Every command is validated against the active profile and a fresh DP snapshot.
 - Current limits are clamped to the configured range.
 - A command is rejected while another command or snapshot is in flight.
 - Link loss causes no automatic action. The device continues its local

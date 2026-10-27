@@ -8,7 +8,6 @@
 
 #include "config_store.h"
 #include "ha_discovery.h"
-#include "profiles.h"
 
 extern PubSubClient mqtt;
 
@@ -28,11 +27,6 @@ bool loaded = false;
 char packId[24] = {0};
 char packName[48] = {0};
 char packType[24] = {0};
-uint16_t packRequire[8] = {0};
-uint8_t packRequireCount = 0;
-uint16_t packExclude[8] = {0};
-uint8_t packExcludeCount = 0;
-uint8_t packPriority = 5;
 size_t packDiscoveryCount = 0;
 uint32_t packGeneration = 0;
 
@@ -72,66 +66,11 @@ String itemPath(uint32_t generation, size_t index) {
   return String("/p") + generation + "_" + index + ".json";
 }
 
-bool parseDetect(JsonVariant value, uint16_t *require, uint8_t &requireCount,
-                 uint16_t *exclude, uint8_t &excludeCount, uint8_t &priority,
-                 String &error) {
-  requireCount = 0;
-  excludeCount = 0;
-  priority = 5;
-  if (value.isNull()) return true;
-  if (!value.is<JsonObject>()) {
-    error = "detect must be an object";
-    return false;
-  }
-  JsonObject detect = value.as<JsonObject>();
-  const long pri = detect["priority"] | 5;
-  if (pri < 0 || pri > 255) {
-    error = "detect.priority must be 0-255";
-    return false;
-  }
-  priority = static_cast<uint8_t>(pri);
-  JsonArray req = detect["require"].as<JsonArray>();
-  if (!req.isNull()) {
-    for (JsonVariant item : req) {
-      if (requireCount >= 8) {
-        error = "detect.require supports at most 8 DPs";
-        return false;
-      }
-      const long dp = item.as<long>();
-      if (dp < 1 || dp > 999) {
-        error = "detect.require contains an invalid DP";
-        return false;
-      }
-      require[requireCount++] = static_cast<uint16_t>(dp);
-    }
-  }
-  JsonArray ex = detect["exclude"].as<JsonArray>();
-  if (!ex.isNull()) {
-    for (JsonVariant item : ex) {
-      if (excludeCount >= 8) {
-        error = "detect.exclude supports at most 8 DPs";
-        return false;
-      }
-      const long dp = item.as<long>();
-      if (dp < 1 || dp > 999) {
-        error = "detect.exclude contains an invalid DP";
-        return false;
-      }
-      exclude[excludeCount++] = static_cast<uint16_t>(dp);
-    }
-  }
-  return true;
-}
 
 struct Meta {
   char id[24] = {0};
   char name[48] = {0};
   char type[24] = {0};
-  uint16_t require[8] = {0};
-  uint8_t requireCount = 0;
-  uint16_t exclude[8] = {0};
-  uint8_t excludeCount = 0;
-  uint8_t priority = 5;
   size_t count = 0;
   uint32_t generation = 0;
 };
@@ -161,10 +100,6 @@ bool parseMeta(JsonObject root, Meta &meta, bool incoming, String &error) {
     error = "device_type is too long";
     return false;
   }
-  if (profileFind(id)) {
-    error = "profile id is already used by a built-in or custom profile";
-    return false;
-  }
   const long count = root["discovery_count"] | 0;
   if (count < 1 || count > static_cast<long>(MAX_ITEMS)) {
     error = "discovery_count must be 1-256";
@@ -173,10 +108,6 @@ bool parseMeta(JsonObject root, Meta &meta, bool incoming, String &error) {
   const long gen = root["generation"] | 0;
   if (!incoming && (gen < 1 || gen > 0x7fffffffL)) {
     error = "profile generation is invalid";
-    return false;
-  }
-  if (!parseDetect(root["detect"], meta.require, meta.requireCount,
-                   meta.exclude, meta.excludeCount, meta.priority, error)) {
     return false;
   }
   copyText(meta.id, sizeof(meta.id), id);
@@ -191,11 +122,6 @@ void applyMeta(const Meta &meta) {
   copyText(packId, sizeof(packId), meta.id);
   copyText(packName, sizeof(packName), meta.name);
   copyText(packType, sizeof(packType), meta.type);
-  memcpy(packRequire, meta.require, sizeof(packRequire));
-  memcpy(packExclude, meta.exclude, sizeof(packExclude));
-  packRequireCount = meta.requireCount;
-  packExcludeCount = meta.excludeCount;
-  packPriority = meta.priority;
   packDiscoveryCount = meta.count;
   packGeneration = meta.generation;
 }
@@ -253,22 +179,6 @@ bool readItemFile(size_t index, String &json) {
   return json.length() == size;
 }
 
-bool keyPresent(JsonObject dps, uint16_t dp) {
-  char key[8];
-  snprintf(key, sizeof(key), "%u", static_cast<unsigned>(dp));
-  return !dps[key].isNull();
-}
-
-bool packMatchesDps(JsonObject dps) {
-  if (packRequireCount == 0) return true;
-  for (uint8_t i = 0; i < packRequireCount; ++i) {
-    if (!keyPresent(dps, packRequire[i])) return false;
-  }
-  for (uint8_t i = 0; i < packExcludeCount; ++i) {
-    if (keyPresent(dps, packExclude[i])) return false;
-  }
-  return true;
-}
 
 String prefixedObjectId(const char *objectId) {
   return String("pack_") + objectId;
@@ -385,12 +295,6 @@ bool commitStreamMeta(const Meta &meta, String &error) {
     out["device_type"] = meta.type;
     out["discovery_count"] = meta.count;
     out["generation"] = meta.generation;
-    JsonObject detect = out["detect"].to<JsonObject>();
-    detect["priority"] = meta.priority;
-    JsonArray req = detect["require"].to<JsonArray>();
-    for (uint8_t i = 0; i < meta.requireCount; ++i) req.add(meta.require[i]);
-    JsonArray ex = detect["exclude"].to<JsonArray>();
-    for (uint8_t i = 0; i < meta.excludeCount; ++i) ex.add(meta.exclude[i]);
   }
 
   String json;
@@ -431,15 +335,15 @@ void cleanupOrphanFiles() {
 void publishRawSensor() {
   JsonDocument doc;
   doc["name"] = "Raw DPs";
-  doc["state_topic"] = settings.mqttTopicDps;
+  doc["state_topic"] = mqttTopicDps();
   doc["value_template"] = "{{ value_json.dps | count }}";
-  doc["json_attributes_topic"] = settings.mqttTopicDps;
+  doc["json_attributes_topic"] = mqttTopicDps();
   doc["json_attributes_template"] = "{{ {\"dps\": value_json.dps} | tojson }}";
   doc["entity_category"] = "diagnostic";
   doc["icon"] = "mdi:code-json";
   addHaCommon(doc);
   doc["object_id"] = haObjectId("pack_raw");
-  doc["unique_id"] = String(settings.haDeviceId) + "_pack_raw";
+  doc["unique_id"] = haObjectId("pack_raw");
   publishHaConfig("sensor", "pack_raw", doc);
 }
 
@@ -468,23 +372,7 @@ size_t browserProfileDiscoveryCount() {
   return loaded ? packDiscoveryCount : 0;
 }
 
-bool browserProfileSelected() {
-  return loaded && settings.profileId[0] &&
-         strcmp(settings.profileId, packId) == 0;
-}
-
-bool browserProfileMatches(JsonObject dps) {
-  if (!loaded) return false;
-  if (packRequireCount == 0) return true;
-  size_t present = 0;
-  for (uint8_t i = 0; i < packRequireCount; ++i) {
-    if (keyPresent(dps, packRequire[i])) present++;
-  }
-  uint8_t needed = packRequireCount;
-  if (packRequireCount > 2) needed = packRequireCount - 2;
-  if (needed < 1) needed = 1;
-  return present >= needed;
-}
+bool browserProfileSelected() { return loaded; }
 
 void browserProfileStreamBegin() {
   streamActive = true;
@@ -562,11 +450,6 @@ bool browserProfileStreamFinish(String &error) {
   }
   applyMeta(streamMeta);
   loaded = true;
-  copyText(settings.profileId, sizeof(settings.profileId), packId);
-  if (!saveSettings()) {
-    error = "could not save profile selection";
-    return false;
-  }
   streamActive = false;
   Serial.printf("[pack] upload complete: '%s' (%u entries, generation %u)\n",
                 packId, static_cast<unsigned>(packDiscoveryCount),
@@ -578,6 +461,14 @@ void browserProfileStreamAbort() {
   streamActive = false;
   streamFailed = true;
   streamError = "profile upload aborted";
+}
+
+bool browserProfileMetaJson(String &json) {
+  return loaded && readMetaFile(json);
+}
+
+bool browserProfileItemJson(size_t index, String &json) {
+  return loaded && index < packDiscoveryCount && readItemFile(index, json);
 }
 
 String browserProfileTelemetryJson() {
@@ -622,12 +513,17 @@ void browserProfilePublishDiscovery() {
     JsonObject config = entry["config"].as<JsonObject>();
     if (!component[0] || !objectId[0] || config.isNull()) continue;
 
+    String configJson;
+    serializeJson(config, configJson);
+    configJson.replace("__STATE_TOPIC__", mqttTopicDps());
+    configJson.replace("__CMD_TOPIC__", mqttTopicPackCommand());
+    configJson.replace("__RAW_ENTITY__", browserProfileRawEntityId());
+    configJson.replace("tuya-lora/charger", mqttTopicPrefix());
     JsonDocument doc;
-    for (JsonPair kv : config) doc[kv.key()] = kv.value();
+    if (deserializeJson(doc, configJson)) continue;
     addHaCommon(doc);
     const String prefixed = prefixedObjectId(objectId);
-    const String unique = String(settings.haDeviceId) + "_" + prefixed + "_" +
-                          component;
+    const String unique = haObjectId(prefixed.c_str()) + "_" + component;
     doc["object_id"] = haObjectId(prefixed.c_str());
     doc["unique_id"] = unique;
     publishHaConfig(component, prefixed, doc);
@@ -635,12 +531,7 @@ void browserProfilePublishDiscovery() {
   publishRawSensor();
 }
 
-String browserProfileCommandTopic() {
-  String base = settings.mqttTopicCmdCharge;
-  const int slash = base.lastIndexOf('/');
-  if (slash > 0) base.remove(slash);
-  return base + "/dp";
-}
+String browserProfileCommandTopic() { return mqttTopicPackCommand(); }
 
 String browserProfileRawEntityId() {
   return String("sensor.") + haObjectId("pack_raw");

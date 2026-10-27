@@ -297,7 +297,7 @@ void saveSlots(const uint8_t *slots) {
 }
 
 String commandBase() {
-  String base = settings.mqttTopicCmdCharge;
+  String base = mqttTopicCommand("charge");
   const int slash = base.lastIndexOf('/');
   if (slash > 0) base.remove(slash);
   return base;
@@ -349,7 +349,7 @@ bool genericProfileActive(const ProfileDef *profile) {
 }
 
 String genericStateTopic(const char *key) {
-  return String(settings.mqttTopicState) + "/entities/" + key;
+  return String(mqttTopicState()) + "/entities/" + key;
 }
 
 String genericCommandTopic(const char *key) {

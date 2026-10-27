@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tuya LoRa — Profile catalog</title>
+<title>Tuya LoRa — Profile editor</title>
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
@@ -19,6 +19,7 @@
   button { padding: 9px 13px; border: 1px solid #8886; border-radius: 8px; background: #fff; color: #17181b; font: inherit; cursor: pointer; }
   button.primary { background: #0969da; border-color: #0969da; color: #fff; }
   button:disabled { opacity: .45; cursor: not-allowed; }
+  textarea { width: 100%; min-height: 420px; padding: 12px; border: 1px solid #8886; border-radius: 8px; background: #fff; color: inherit; font: .82rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
   details { border: 1px solid #8884; border-radius: 10px; margin: 8px 0; background: #fff; }
   summary { cursor: pointer; padding: 10px 12px; font-weight: 650; }
   .item { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 9px 12px; border-top: 1px solid #8882; }
@@ -31,13 +32,10 @@
   .badge.no { background: #cf222e22; color: #cf222e; }
   .status { margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: #8881; white-space: pre-wrap; }
   .status.err { background: #cf222e18; color: #cf222e; }
-  .preview { border: 1px solid #8884; border-radius: 10px; padding: 12px; background: #fff; }
-  .preview ul { margin: 8px 0 0 18px; padding: 0; }
-  .preview li { margin: 3px 0; }
   code { font: .85em ui-monospace, SFMono-Regular, Menlo, monospace; }
   @media (prefers-color-scheme: dark) {
     body { background: #111214; color: #e8e8ea; }
-    button, details, .preview { background: #1a1c20; color: inherit; }
+    button, details, textarea { background: #1a1c20; color: inherit; }
     button.primary { background: #2f81f7; border-color: #2f81f7; }
     a { color: #6cb6ff; }
   }
@@ -45,37 +43,34 @@
 </head>
 <body>
 <main>
-  <h1>Profile catalog</h1>
-  <p class="muted">Browse tuya-local device descriptors and save one precompiled profile to the base. Only the selected profile is stored on the ESP32.</p>
+  <h1>Profile editor</h1>
+  <p class="muted">One active profile. Pick a device from the online tuya-local catalog, then fine-tune the generated JSON before saving it to the base.</p>
   <div id="base-info" class="status">Connecting to the base…</div>
 
-  <div class="row">
-    <input id="search" type="search" placeholder="Search device, brand or model…" autocomplete="off">
-    <button id="reload-offline" type="button">Reload offline catalog</button>
-  </div>
-
-  <div class="row">
-    <input id="catalog-url" type="url" spellcheck="false" value="https://raw.githubusercontent.com/gyenchev/tuya-lora-bridge/refs/heads/main/web/catalog.json">
-    <button id="load-online" class="primary" type="button">Load online catalog</button>
-  </div>
-  <p class="muted">The online catalog and YAML are fetched from GitHub. The offline catalog is served by the base and works without internet.</p>
+  <section>
+    <h2>Active profile JSON</h2>
+    <div class="status" id="profile-summary">No profile loaded.</div>
+    <div class="row">
+      <button id="reload-active" type="button">Reload active profile</button>
+      <button id="format-json" type="button">Format JSON</button>
+      <button id="save" class="primary" type="button">Save to base</button>
+    </div>
+    <textarea id="profile-json" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Select a catalog device or paste a profile JSON object here."></textarea>
+    <p class="hint muted">The profile is stored as metadata plus one discovery entry per Home Assistant entity. `discovery` is the editable entity array; saving adds its count automatically. Topic tokens (`__STATE_TOPIC__`, `__CMD_TOPIC__`, `__RAW_ENTITY__`) are resolved by the base at publish time, so the profile survives MQTT topic/device-name changes. The base reboots after a successful save.</p>
+  </section>
 
   <div id="status" class="status" hidden></div>
 
   <section>
-    <h2>Offline charger catalog</h2>
-    <div id="offline"></div>
-  </section>
-
-  <section>
     <h2>Online tuya-local catalog</h2>
+    <div class="row">
+      <input id="catalog-url" type="url" spellcheck="false" value="https://raw.githubusercontent.com/gyenchev/tuya-lora-bridge/refs/heads/main/web/catalog.json">
+      <button id="load-online" class="primary" type="button">Load online catalog</button>
+    </div>
+    <div class="row">
+      <input id="search" type="search" placeholder="Search device, brand or model…" autocomplete="off">
+    </div>
     <div id="online"></div>
-  </section>
-
-  <section id="preview" hidden>
-    <h2>Preview</h2>
-    <div id="preview-body" class="preview"></div>
-    <div class="row"><button id="save" class="primary" type="button">Save to base</button></div>
   </section>
 </main>
 
@@ -84,9 +79,7 @@ import { buildPack } from '/profile_converter.mjs';
 
 const $ = (id) => document.getElementById(id);
 let info = null;
-let offlinePacks = [];
 let catalog = null;
-let currentPack = null;
 let yamlLib = null;
 
 function setStatus(message, isError = false) {
@@ -114,40 +107,129 @@ async function fetchJson(url, options) {
   return data;
 }
 
+function profileSize(profile) {
+  return JSON.stringify(profile).length;
+}
+
+function tokenizeProfile(profile) {
+  let text = JSON.stringify(profile);
+  const pairs = [
+    [info?.state_topic, '__STATE_TOPIC__'],
+    [info?.command_topic, '__CMD_TOPIC__'],
+    [info?.raw_entity_id, '__RAW_ENTITY__'],
+    ['tuya-lora/charger/dps', '__STATE_TOPIC__'],
+    ['tuya-lora/charger/command/dp', '__CMD_TOPIC__'],
+  ];
+  for (const [from, to] of pairs) {
+    if (from) text = text.split(from).join(to);
+  }
+  text = text.replace(/sensor\.[a-z0-9_]+_pack_raw/g, '__RAW_ENTITY__');
+  return JSON.parse(text);
+}
+
+function setProfile(profile, sourceLabel) {
+  const text = JSON.stringify(profile, null, 2);
+  $('profile-json').value = text;
+  const entities = Array.isArray(profile.discovery) ? profile.discovery.length : 0;
+  $('profile-summary').textContent =
+    `${profile.name || profile.id || 'Unnamed profile'} · ${entities} entities · ${text.length} bytes${sourceLabel ? ` · ${sourceLabel}` : ''}`;
+}
+
+function parseProfile() {
+  let profile;
+  try {
+    profile = JSON.parse($('profile-json').value);
+  } catch (error) {
+    throw new Error(`Invalid JSON: ${error.message}`);
+  }
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
+    throw new Error('Profile JSON must be an object');
+  }
+  if (!Array.isArray(profile.discovery) || !profile.discovery.length) {
+    throw new Error('Profile JSON must contain a non-empty discovery array');
+  }
+  for (const [index, item] of profile.discovery.entries()) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error(`discovery[${index}] must be an object`);
+    }
+    if (!item.component || !item.object_id || !item.config || typeof item.config !== 'object') {
+      throw new Error(`discovery[${index}] needs component, object_id and config`);
+    }
+  }
+  return profile;
+}
+
 async function loadBaseInfo() {
   info = await fetchJson('/api/profile/info');
   const pack = info.pack
-    ? ` · active pack: ${escapeHtml(info.pack.name)} (${escapeHtml(info.pack.id)})`
-    : '';
+    ? ` · active: ${escapeHtml(info.pack.name)} (${escapeHtml(info.pack.id)})`
+    : ' · no active profile';
   $('base-info').innerHTML =
     `<strong>${escapeHtml(info.ha_name || 'Base')}</strong> · state: <code>${escapeHtml(info.state_topic)}</code> · command: <code>${escapeHtml(info.command_topic)}</code>${pack}`;
 }
 
-function materialize(pack) {
-  if (!info) throw new Error('base info is not loaded');
-  const text = JSON.stringify(pack)
-    .replaceAll('__STATE_TOPIC__', info.state_topic)
-    .replaceAll('__CMD_TOPIC__', info.command_topic)
-    .replaceAll('__RAW_ENTITY__', info.raw_entity_id);
-  return JSON.parse(text);
+async function loadActiveProfile() {
+  try {
+    setStatus('Loading active profile from the base…');
+    const response = await fetch('/api/profile/export', { cache: 'no-store' });
+    if (response.status === 204) {
+      $('profile-json').value = '';
+      $('profile-summary').textContent = 'No profile loaded. Select a catalog device or paste JSON.';
+      setStatus('No active profile on the base.');
+      return;
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const text = await response.text();
+    const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+    if (!lines.length) throw new Error('Base returned an empty profile');
+    const meta = JSON.parse(lines.shift());
+    delete meta.generation;
+    delete meta.discovery_count;
+    delete meta.detect;
+    meta.discovery = lines.map((line) => JSON.parse(line));
+    setProfile(tokenizeProfile(meta), 'active profile');
+    setStatus('');
+  } catch (error) {
+    setStatus(`Could not load the active profile: ${error.message}`, true);
+  }
 }
 
-function showPreview(pack, sourceLabel) {
-  currentPack = pack;
-  const size = JSON.stringify(pack).length;
-  const items = pack.discovery.map((item) => {
-    const name = item.config?.name || item.component;
-    return `<li><code>${escapeHtml(item.component)}</code> ${escapeHtml(name)}</li>`;
-  }).join('');
-  const warnings = (pack.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join('');
-  $('preview-body').innerHTML =
-    `<p><strong>${escapeHtml(pack.name)}</strong> <span class="badge">${escapeHtml(pack.device_type || 'Device')}</span></p>
-     <p class="muted">${escapeHtml(sourceLabel || pack.source || '')}</p>
-     <p class="muted">${pack.discovery.length} entities · ${size} bytes</p>
-     ${warnings ? `<p class="muted">Notes:</p><ul>${warnings}</ul>` : ''}
-     <ul>${items}</ul>`;
-  $('preview').hidden = false;
-  $('preview').scrollIntoView({ behavior: 'smooth', block: 'start' });
+async function saveProfile() {
+  try {
+    const profile = parseProfile();
+    const { discovery, ...meta } = profile;
+    delete meta.generation;
+    delete meta.detect;
+    meta.discovery_count = discovery.length;
+    const body = [
+      JSON.stringify(meta),
+      ...discovery.map((item) => JSON.stringify(item)),
+    ].join('\n') + '\n';
+    if (body.length > 250000) throw new Error('Profile upload is larger than the 250 KB limit');
+    setStatus('Saving profile to the base…');
+    $('save').disabled = true;
+    const response = await fetch('/api/profile/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-ndjson' },
+      body,
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) throw new Error(data?.error || `HTTP ${response.status}`);
+    setStatus(`Saved ${data.name || meta.name || 'profile'}. The base is rebooting…`);
+    setTimeout(async () => {
+      try {
+        await loadBaseInfo();
+        await loadActiveProfile();
+        setStatus(`Active profile is now ${info.pack?.name || 'the saved profile'}.`);
+      } catch (error) {
+        setStatus(`Saved. Reconnect to the base to verify. ${error.message}`);
+      }
+      $('save').disabled = false;
+    }, 6000);
+  } catch (error) {
+    setStatus(error.message, true);
+    $('save').disabled = false;
+  }
 }
 
 function makeItem({ title, subtitle, badge, disabled, action }) {
@@ -162,38 +244,11 @@ function makeItem({ title, subtitle, badge, disabled, action }) {
   }
   const button = document.createElement('button');
   button.type = 'button';
-  button.textContent = 'Use';
+  button.textContent = 'Edit';
   button.disabled = Boolean(disabled);
   button.addEventListener('click', action);
   row.appendChild(button);
   return row;
-}
-
-function renderOffline() {
-  const host = $('offline');
-  host.innerHTML = '';
-  if (!offlinePacks.length) {
-    host.innerHTML = '<p class="muted">No offline charger packs were found on the base.</p>';
-    return;
-  }
-  const details = document.createElement('details');
-  details.open = true;
-  details.innerHTML = `<summary>Chargers (${offlinePacks.length})</summary>`;
-  for (const pack of offlinePacks) {
-    details.appendChild(makeItem({
-      title: pack.name,
-      subtitle: `${pack.id} · ${pack.discovery.length} entities`,
-      badge: { label: 'offline', ok: true },
-      action: () => {
-        try {
-          showPreview(materialize(pack), 'Offline charger catalog');
-        } catch (error) {
-          setStatus(error.message, true);
-        }
-      },
-    }));
-  }
-  host.appendChild(details);
 }
 
 function renderOnline() {
@@ -221,7 +276,7 @@ function renderOnline() {
     for (const profile of profiles) {
       details.appendChild(makeItem({
         title: profile.name,
-        subtitle: `${profile.id} · ${profile.file}${profile.reason ? ` · ${profile.reason}` : ''}`,
+        subtitle: `${profile.id} · ${profile.file}`,
         badge: profile.supported
           ? { label: `${profile.discovery} entities`, ok: true }
           : { label: 'conversion error', ok: false },
@@ -240,13 +295,14 @@ function renderOnline() {
               group: profile.group,
               source: `tuya-local ${catalog.tuya_commit.slice(0, 12)}/${profile.file}`,
             }, {
-              stateTopic: info.state_topic,
-              commandTopic: info.command_topic,
-              rawEntity: info.raw_entity_id,
+              stateTopic: '__STATE_TOPIC__',
+              commandTopic: '__CMD_TOPIC__',
+              rawEntity: '__RAW_ENTITY__',
             });
-            if (JSON.stringify(pack).length > 200000) throw new Error('Generated pack is larger than the 200 KB limit');
-            setStatus('');
-            showPreview(pack, `Online tuya-local catalog · ${profile.file}`);
+            if (profileSize(pack) > 200000) throw new Error('Generated profile is larger than the 200 KB limit');
+            setProfile(pack, `tuya-local catalog · ${profile.file}`);
+            setStatus('Profile loaded into the editor. Review it, then save to the base.');
+            $('profile-json').scrollIntoView({ behavior: 'smooth', block: 'start' });
           } catch (error) {
             setStatus(error.message, true);
           }
@@ -272,16 +328,6 @@ async function ensureYaml() {
   return yamlLib;
 }
 
-async function loadOffline() {
-  try {
-    const data = await fetchJson('/api/profile/offline');
-    offlinePacks = data.packs || [];
-    renderOffline();
-  } catch (error) {
-    $('offline').innerHTML = `<p class="muted">Offline catalog unavailable: ${escapeHtml(error.message)}</p>`;
-  }
-}
-
 async function loadOnline() {
   try {
     setStatus('Fetching online catalog…');
@@ -293,48 +339,24 @@ async function loadOnline() {
   }
 }
 
-async function savePack() {
-  if (!currentPack) return;
+$('reload-active').addEventListener('click', loadActiveProfile);
+$('format-json').addEventListener('click', () => {
   try {
-    const { discovery, ...meta } = currentPack;
-    const body = [
-      JSON.stringify({ ...meta, discovery_count: discovery.length }),
-      ...discovery.map((item) => JSON.stringify(item)),
-    ].join('\n') + '\n';
-    if (body.length > 250000) throw new Error('Profile upload is larger than the 250 KB limit');
-    setStatus('Saving profile to the base…');
-    const response = await fetch('/api/profile/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-ndjson' },
-      body,
-    });
-    const data = await response.json().catch(() => null);
-    if (!response.ok || !data?.ok) throw new Error(data?.error || `HTTP ${response.status}`);
-    setStatus(`Saved ${currentPack.name}. The base is rebooting…`);
-    $('save').disabled = true;
-    setTimeout(async () => {
-      try {
-        await loadBaseInfo();
-        setStatus(`Active profile is now ${info.pack?.name || 'the saved pack'}.`);
-      } catch (error) {
-        setStatus(`Saved. Reconnect to the base to verify. ${error.message}`);
-      }
-      $('save').disabled = false;
-    }, 6000);
+    const profile = parseProfile();
+    setProfile(profile, 'formatted');
+    setStatus('');
   } catch (error) {
     setStatus(error.message, true);
   }
-}
-
-$('reload-offline').addEventListener('click', loadOffline);
+});
+$('save').addEventListener('click', saveProfile);
 $('load-online').addEventListener('click', loadOnline);
 $('search').addEventListener('input', renderOnline);
-$('save').addEventListener('click', savePack);
 
 (async () => {
   try {
     await loadBaseInfo();
-    await loadOffline();
+    await loadActiveProfile();
   } catch (error) {
     $('base-info').textContent = `Could not reach the base: ${error.message}`;
   }

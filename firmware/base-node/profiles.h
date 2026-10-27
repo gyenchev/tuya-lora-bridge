@@ -207,14 +207,5 @@ size_t profilesCount();
 const ProfileDef *profilesAt(size_t index);
 const ProfileDef *profilesFallback();
 const ProfileDef *profileFind(const char *id);
-const ProfileDef *profileAutoDetect(JsonObject dps);
-bool profileMatches(const ProfileDef &profile, JsonObject dps);
-String profileOptions(const char *selected);
-
-// Apply the legacy per-profile command DP settings to a built-in profile.
-// Custom profiles always use the control map from their JSON definition.
-void profilesSetBuiltinControl(const char *id, uint16_t chargeDp,
-                               uint16_t currentDp, uint16_t delayDp,
-                               uint16_t modeDp);
 
 }  // namespace tuya_lora

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Generate the online catalog, offline charger packs and firmware assets.
+// Generate the online catalog and firmware assets.
 //
 // Usage:
 //   node web/build_assets.mjs --source /path/to/tuya-local/custom_components/tuya_local/devices
@@ -77,7 +77,7 @@ function rawString(name, content) {
   return `R"${delimiter}(${content})${delimiter}"`;
 }
 
-function writeAssets(outDir, firmwareOut, builderHtml, converterJs, mappingJs, offlineJson) {
+function writeAssets(outDir, firmwareOut, builderHtml, converterJs, mappingJs) {
   fs.mkdirSync(firmwareOut, { recursive: true });
   const header = `#pragma once
 
@@ -88,7 +88,6 @@ namespace tuya_lora {
 extern const char PROFILE_BUILDER_HTML[] PROGMEM;
 extern const char PROFILE_CONVERTER_JS[] PROGMEM;
 extern const char PROFILE_MAPPING_JS[] PROGMEM;
-extern const char OFFLINE_CHARGERS_JSON[] PROGMEM;
 }  // namespace tuya_lora
 `;
   const cpp = `#include "web_assets.h"
@@ -104,14 +103,10 @@ ${rawString("A_JS", converterJs)};
 const char PROFILE_MAPPING_JS[] PROGMEM =
 ${rawString("A_MAP", mappingJs)};
 
-const char OFFLINE_CHARGERS_JSON[] PROGMEM =
-${rawString("A_JSON", offlineJson)};
-
 }  // namespace tuya_lora
 `;
   fs.writeFileSync(path.join(firmwareOut, "web_assets.h"), header);
   fs.writeFileSync(path.join(firmwareOut, "web_assets.cpp"), cpp);
-  fs.writeFileSync(path.join(outDir, "offline_chargers.json"), offlineJson);
 }
 
 function main() {
@@ -124,8 +119,6 @@ function main() {
 
   const used = new Set();
   const profiles = [];
-  const offlineCandidates = [];
-  const offline = [];
   let parseErrors = 0;
 
   for (const file of files) {
@@ -155,43 +148,6 @@ function main() {
       bytes: support.bytes,
       reason: support.reason,
     });
-
-    if (group === "Chargers" && support.supported) {
-      try {
-        const pack = buildPack(descriptor, meta, {
-          stateTopic: "__STATE_TOPIC__",
-          commandTopic: "__CMD_TOPIC__",
-          rawEntity: "__RAW_ENTITY__",
-        });
-        const packed = JSON.stringify(pack);
-        if (packed.length <= 45000) offlineCandidates.push(pack);
-      } catch {
-        // The online catalog still exposes the descriptor.
-      }
-    }
-  }
-
-  const offlinePriority = [
-    "feyree_ev_charger",
-    "zencar_ev_charger",
-    "tary_taac380_evcharger",
-    "adpow_gob6pro_evcharger",
-    "makeskyblue_mppt_charge",
-    "parkside_plgs2012a1_sma",
-  ];
-  offlineCandidates.sort((a, b) => {
-    const ai = offlinePriority.indexOf(a.id);
-    const bi = offlinePriority.indexOf(b.id);
-    if (ai !== -1 || bi !== -1) return (ai === -1 ? 1000 : ai) - (bi === -1 ? 1000 : bi);
-    return a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
-  });
-  let offlineBytes = 0;
-  const offlineBudget = 200000;
-  for (const pack of offlineCandidates) {
-    const bytes = JSON.stringify(pack).length;
-    if (offline.length > 0 && offlineBytes + bytes > offlineBudget) continue;
-    offline.push(pack);
-    offlineBytes += bytes;
   }
 
   const order = new Map(groupOrder([...new Set(profiles.map((p) => p.group))]).map((g, i) => [g, i]));
@@ -205,26 +161,17 @@ function main() {
     profiles,
   };
 
-  const offlineDoc = {
-    generated: catalog.generated,
-    tuya_commit: commit,
-    packs: offline,
-  };
-
   fs.mkdirSync(args.out, { recursive: true });
   fs.writeFileSync(path.join(args.out, "catalog.json"), JSON.stringify(catalog));
-  const offlineJson = JSON.stringify(offlineDoc);
 
   const builderHtml = fs.readFileSync(path.join(__dirname, "profile_builder.html"), "utf8");
   const converterJs = fs.readFileSync(path.join(__dirname, "profile_converter.mjs"), "utf8");
   const mappingJs = fs.readFileSync(path.join(__dirname, "profile_mapping.mjs"), "utf8");
-  writeAssets(args.out, args.firmwareOut, builderHtml, converterJs, mappingJs, offlineJson);
+  writeAssets(args.out, args.firmwareOut, builderHtml, converterJs, mappingJs);
 
   console.log(`tuya-local commit: ${commit}`);
   console.log(`descriptors: ${files.length}, parse errors: ${parseErrors}`);
   console.log(`catalog profiles: ${profiles.length}, supported: ${profiles.filter((p) => p.supported).length}`);
-  console.log(`offline charger packs: ${offline.length}`);
-  console.log(`offline JSON: ${offlineJson.length} bytes`);
   console.log(`wrote ${path.join(args.out, "catalog.json")} and firmware assets in ${args.firmwareOut}`);
 }
 
