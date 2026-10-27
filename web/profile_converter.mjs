@@ -19,6 +19,7 @@ import {
   numberValue,
   stateTemplate,
   text,
+  writeAppend,
 } from "./profile_mapping.mjs";
 
 export const SIMPLE_ENTITIES = new Set([
@@ -317,12 +318,12 @@ function commandFor(entity, dp, targetExpr, info) {
 function commandForMany(entity, writes, info) {
   const ctx = new Ctx();
   const rawEntity = info.rawEntity || "__RAW_ENTITY__";
-  let code = `{% set dps = state_attr(${lit(rawEntity)}, "dps") or {} %}\n{% set writes = {} %}\n`;
+  let code = `{% set dps = state_attr(${lit(rawEntity)}, "dps") or {} %}\n{% set writes = namespace(out="") %}\n`;
   for (const write of writes) {
     if (!write || !write.dp) continue;
     code += emitWriteTo(entity, write.dp, write.target, ctx, "writes");
   }
-  code += "{{ writes | tojson }}";
+  code += "{{ '{' ~ writes.out ~ '}' }}";
   return code;
 }
 
@@ -810,7 +811,7 @@ function buildLight(entity, info) {
   const onWrites = [];
   if (switchDp) onWrites.push({ dp: switchDp, target: "true" });
 
-  let commandCode = `{% set dps = state_attr(${lit(info.rawEntity)}, "dps") or {} %}\n{% set writes = {} %}\n`;
+  let commandCode = `{% set dps = state_attr(${lit(info.rawEntity)}, "dps") or {} %}\n{% set writes = namespace(out="") %}\n`;
   const ctx = new Ctx("c");
   if (brightnessDp) {
     const range = brightnessDp.range || { min: 0, max: 100 };
@@ -821,7 +822,7 @@ function buildLight(entity, info) {
     commandCode += `{% if color_temp is defined and color_temp is not none %}\n${emitWriteTo(entity, colorTempDp, "color_temp", ctx, "writes")}{% endif %}\n`;
     if (colorModeDp) {
       const rawMode = rawForLogical(entity, colorModeDp, "color_temp");
-      if (rawMode !== null) commandCode += `{% if color_temp is defined and color_temp is not none %}{% set _ = writes.update({${lit(String(colorModeDp.id))}: ${lit(rawMode)}}) %}{% endif %}\n`;
+      if (rawMode !== null) commandCode += `{% if color_temp is defined and color_temp is not none %}${writeAppend("writes", lit(String(colorModeDp.id)), lit(rawMode))}{% endif %}\n`;
     }
   }
   if (rgb) {
@@ -873,10 +874,10 @@ function buildLight(entity, info) {
       }
       const packed = formatPackTemplate(entity, rgb, fieldExprs, { ctx });
       commandCode += packed.code;
-      commandCode += `{% set _ = writes.update({${lit(String(rgb.id))}: ${packed.var}}) %}\n`;
+      commandCode += `${writeAppend("writes", lit(String(rgb.id)), packed.var)}\n`;
       if (colorModeDp) {
         const mode = rawForLogical(entity, colorModeDp, hsv ? "hs" : "rgb");
-        if (mode !== null) commandCode += `{% if (hue is defined and hue is not none) or (red is defined and red is not none) or (green is defined and green is not none) or (blue is defined and blue is not none) %}{% set _ = writes.update({${lit(String(colorModeDp.id))}: ${lit(mode)}}) %}{% endif %}\n`;
+        if (mode !== null) commandCode += `{% if (hue is defined and hue is not none) or (red is defined and red is not none) or (green is defined and green is not none) or (blue is defined and blue is not none) %}${writeAppend("writes", lit(String(colorModeDp.id)), lit(mode))}{% endif %}\n`;
       }
     }
   }
@@ -886,24 +887,24 @@ function buildLight(entity, info) {
   if (!switchDp && !brightnessDp && effectDp) {
     commandCode += `{% if brightness is none and color_temp is none and hue is none and red is none and effect is none %}\n`;
     const raw = rawForLogical(entity, effectDp, visibleValues(effectDp)[0] ?? "on");
-    if (raw !== null) commandCode += `{% set _ = writes.update({${lit(String(effectDp.id))}: ${lit(raw)}}) %}\n`;
+    if (raw !== null) commandCode += `${writeAppend("writes", lit(String(effectDp.id)), lit(raw))}\n`;
     commandCode += `{% endif %}\n`;
   }
-  commandCode += "{{ writes | tojson }}";
+  commandCode += "{{ '{' ~ writes.out ~ '}' }}";
   config.command_on_template = commandCode;
 
-  let offCode = `{% set dps = state_attr(${lit(info.rawEntity)}, "dps") or {} %}\n{% set writes = {} %}\n`;
+  let offCode = `{% set dps = state_attr(${lit(info.rawEntity)}, "dps") or {} %}\n{% set writes = namespace(out="") %}\n`;
   if (switchDp) {
     const raw = rawForLogical(entity, switchDp, false);
-    if (raw !== null) offCode += `{% set _ = writes.update({${lit(String(switchDp.id))}: ${lit(raw)}}) %}\n`;
+    if (raw !== null) offCode += `${writeAppend("writes", lit(String(switchDp.id)), lit(raw))}\n`;
   } else if (brightnessDp) {
     const raw = rawForLogical(entity, brightnessDp, 0);
-    if (raw !== null) offCode += `{% set _ = writes.update({${lit(String(brightnessDp.id))}: ${lit(raw)}}) %}\n`;
+    if (raw !== null) offCode += `${writeAppend("writes", lit(String(brightnessDp.id)), lit(raw))}\n`;
   } else if (effectDp) {
     const raw = rawForLogical(entity, effectDp, "off");
-    if (raw !== null) offCode += `{% set _ = writes.update({${lit(String(effectDp.id))}: ${lit(raw)}}) %}\n`;
+    if (raw !== null) offCode += `${writeAppend("writes", lit(String(effectDp.id)), lit(raw))}\n`;
   }
-  offCode += "{{ writes | tojson }}";
+  offCode += "{{ '{' ~ writes.out ~ '}' }}";
   config.command_off_template = offCode;
 
   addAttributes(config, entity, info);
@@ -2299,7 +2300,7 @@ export function buildTelemetry(yaml) {
 }
 
 function deriveDetect(telemetry, yaml) {
-  const preferred = ["status", "voltage_l1", "current_l1", "power", "temperature", "fault", "plugged", "charging"];
+  const preferred = ["status", "voltage_l1", "voltage_l2", "temperature", "energy", "session_energy", "current_l1", "power"];
   const require = [];
   for (const key of preferred) {
     const field = telemetry.find((f) => f.key === key && f.dp);

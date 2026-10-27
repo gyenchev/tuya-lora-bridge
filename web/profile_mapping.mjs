@@ -339,6 +339,10 @@ function emitAssignRule(entity, dp, ctx, rawVar, outVar, rule, depth, isDefault 
   return code;
 }
 
+function isNullDpsRule(rule) {
+  return Object.prototype.hasOwnProperty.call(rule, "dps_val") && rule.dps_val === null;
+}
+
 export function emitState(entity, dp, ctx, dpsVar, outVar, depth = 0) {
   const rawVar = ctx.var("r");
   let code = `{% set ${rawVar} = ${dpsVar}.get(${lit(String(dp.id))}) %}\n`;
@@ -361,16 +365,18 @@ export function emitState(entity, dp, ctx, dpsVar, outVar, depth = 0) {
     return code;
   }
 
-  const withFrom = rules.filter((r) => hasFrom(r));
-  const defaults = rules.filter((r) => !hasFrom(r));
+  const withFrom = rules.filter((r) => hasFrom(r) || isNullDpsRule(r));
+  const defaults = rules.filter((r) => !hasFrom(r) && !isNullDpsRule(r));
   const defaultRule = defaults.length ? defaults[defaults.length - 1] : null;
 
   if (withFrom.length) {
     withFrom.forEach((rule, index) => {
       let match;
-      if (Array.isArray(rule.dps_val)) {
+      if (isNullDpsRule(rule)) {
+        match = `${rawVar} is none`;
+      } else if (Array.isArray(rule.dps_val)) {
         match = `${rawVar} | string in ${lit(rule.dps_val.map((v) => String(v)))}`;
-      } else if (dp.rawtype === "bitfield") {
+      } else if (dp.rawtype === "bitfield" && Number(rule.dps_val) !== 0) {
         match = bitTestExpr(`(${rawVar} | int)`, rule.dps_val);
       } else {
         match = `${rawVar} | string == ${lit(String(rule.dps_val))}`;
@@ -496,8 +502,8 @@ function emitRedirectWrite(entity, dp, ctx, targetVar, writesVar, rule, depth) {
 
 function emitWrite(entity, dp, ctx, targetVar, writesVar, depth = 0) {
   const rules = mappingRules(dp);
-  const withValue = rules.filter((r) => Object.prototype.hasOwnProperty.call(r, "value") && !r.hidden);
-  const defaults = rules.filter((r) => !Object.prototype.hasOwnProperty.call(r, "value") && !r.hidden);
+  const withValue = rules.filter((r) => Object.prototype.hasOwnProperty.call(r, "value") && !r.hidden && !isNullDpsRule(r));
+  const defaults = rules.filter((r) => !Object.prototype.hasOwnProperty.call(r, "value") && !r.hidden && !isNullDpsRule(r));
   const defaultRule = defaults.length ? defaults[defaults.length - 1] : null;
 
   const rawVar = ctx.var("raw");
@@ -555,7 +561,7 @@ function emitWrite(entity, dp, ctx, targetVar, writesVar, depth = 0) {
             !constraint.readonly &&
             Object.prototype.hasOwnProperty.call(cond, "dps_val") &&
             cond.dps_val !== null && !Array.isArray(cond.dps_val)) {
-          branch += `{% set _ = ${writesVar}.update({${lit(String(constraint.id))}: ${lit(cond.dps_val)}}) %}\n`;
+          branch += writeAppend(writesVar, lit(String(constraint.id)), lit(cond.dps_val));
         }
         branch += emitCommandTransform(entity, dp, ctx, rawVar, cond);
         branch += emitRangeClamp(ctx, rawVar, dp.range);
@@ -565,7 +571,7 @@ function emitWrite(entity, dp, ctx, targetVar, writesVar, depth = 0) {
 
     const encoded = ctx.var("enc");
     branch += emitEncode(entity, dp, ctx, rawVar, encoded);
-    branch += `{% set _ = ${writesVar}.update({${idVar}: ${encoded}}) %}\n`;
+    branch += writeAppend(writesVar, idVar, encoded);
     return { code: branch, terminal: false };
   };
 
@@ -595,6 +601,10 @@ function emitWrite(entity, dp, ctx, targetVar, writesVar, depth = 0) {
   return code;
 }
 
+export function writeAppend(writesVar, idExpr, valueExpr) {
+  return `{% set ${writesVar}.out = ${writesVar}.out ~ (', ' if ${writesVar}.out else '') ~ ('"' ~ ${idExpr} ~ '": ' ~ (${valueExpr} | tojson)) %}\n`;
+}
+
 export function commandTemplate(entity, dp, targetExpr, options = {}) {
   const ctx = options.ctx || new Ctx();
   const rawEntity = options.rawEntity || "__RAW_ENTITY__";
@@ -602,9 +612,9 @@ export function commandTemplate(entity, dp, targetExpr, options = {}) {
   const targetVar = ctx.var("target");
   let code = `{% set dps = state_attr(${lit(rawEntity)}, "dps") or {} %}\n`;
   code += `{% set ${targetVar} = ${targetExpr} %}\n`;
-  code += `{% set ${writesVar} = {} %}\n`;
+  code += `{% set ${writesVar} = namespace(out="") %}\n`;
   code += emitWrite(entity, dp, ctx, targetVar, writesVar, 0);
-  code += `{{ ${writesVar} | tojson }}`;
+  code += `{{ '{' ~ ${writesVar}.out ~ '}' }}`;
   return { code, writesVar, ctx };
 }
 
@@ -625,7 +635,7 @@ export function commandWrites(entity, dp, targetExpr, options = {}) {
     code += `{% set dps = state_attr(${lit(rawEntity)}, "dps") or {} %}\n`;
   }
   code += `{% set ${targetVar} = ${targetExpr} %}\n`;
-  code += `{% set ${writesVar} = {} %}\n`;
+  code += `{% set ${writesVar} = namespace(out="") %}\n`;
   code += emitWrite(entity, dp, ctx, targetVar, writesVar, 0);
   return { code, writesVar, ctx };
 }

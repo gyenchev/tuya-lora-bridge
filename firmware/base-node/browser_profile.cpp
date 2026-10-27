@@ -481,8 +481,7 @@ bool browserProfileMatches(JsonObject dps) {
     if (keyPresent(dps, packRequire[i])) present++;
   }
   uint8_t needed = packRequireCount;
-  if (packRequireCount > 4) needed = packRequireCount - 2;
-  else if (packRequireCount > 2) needed = packRequireCount - 1;
+  if (packRequireCount > 2) needed = packRequireCount - 2;
   if (needed < 1) needed = 1;
   return present >= needed;
 }
