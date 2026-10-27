@@ -58,10 +58,10 @@ The Tuya device stays on its own local protections and schedules.
   collection (1,779 devices at the pinned commit), grouped by device type and
   converted in the browser to precompiled Home Assistant MQTT discovery packs.
 - Native MQTT entities for lights, fans, covers, climate, water heaters,
-  humidifiers, locks, vacuums, alarms, sirens, valves, events, time/datetime,
+  humidifiers, locks, alarms, sirens, valves, events, time/datetime,
   lawn mowers, cameras, sensors, binary sensors, switches, numbers, selects,
-  buttons and text entities. Media players and Tuya remotes/infrared emitters
-  are decomposed into standard MQTT entities.
+  buttons and text entities. Vacuums, media players and Tuya remotes/infrared
+  emitters are decomposed into standard MQTT controls and sensors.
 - A raw-DP sensor exposes every DP as an attribute, so no DP is hidden even
   when a platform cannot express it natively.
 - Streaming profile-pack storage (metadata + one small file per discovery
@@ -339,11 +339,11 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
   collection. Every descriptor converts; there is no “milestone”/unsupported
   status in the catalog.
 - Native MQTT platforms are generated for light, fan, cover, climate,
-  water_heater, humidifier, lock, vacuum, alarm_control_panel, siren, valve,
+  water_heater, humidifier, lock, alarm_control_panel, siren, valve,
   event, time, datetime, lawn_mower, camera, sensor, binary_sensor, switch,
-  number, select, button and text. Media players, Tuya remotes and infrared
-  emitters are decomposed into standard MQTT switch/number/select/button/text/
-  sensor/event entities.
+  number, select, button and text. Vacuums, media players, Tuya remotes and
+  infrared emitters are decomposed into standard MQTT switch/number/select/
+  button/text/sensor/event entities.
 - The raw-DP sensor is always published in pack mode and exposes every DP as an
   attribute. All remaining DPs are therefore available even when a platform
   cannot represent them natively.

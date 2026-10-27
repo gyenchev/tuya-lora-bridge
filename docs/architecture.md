@@ -81,9 +81,9 @@ interrupts its mains supply.
   command templates; the remote stays a raw DP proxy.
 - The browser converts any tuya-local descriptor into a pack using native MQTT
   platforms (light, fan, cover, climate, water heater, humidifier, lock,
-  vacuum, alarm, siren, valve, event, time/datetime, lawn mower, camera,
-  sensor, binary sensor, switch, number, select, button, text) and decomposes
-  media players, remotes and infrared emitters into standard entities.
+  alarm, siren, valve, event, time/datetime, lawn mower, camera, sensor,
+  binary sensor, switch, number, select, button, text) and decomposes
+  vacuums, media players, remotes and infrared emitters into standard entities.
 - Stores packs as metadata plus one small LittleFS file per discovery entity.
   Uploads are streamed as NDJSON, so large descriptors do not require a large
   in-RAM JSON document.

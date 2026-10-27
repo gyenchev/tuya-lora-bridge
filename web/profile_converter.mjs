@@ -1772,6 +1772,108 @@ function buildMediaPlayer(entity, info) {
   return items;
 }
 
+function buildVacuum(entity, info) {
+  const status = use(entity, "status");
+  const command = use(entity, "command");
+  const power = use(entity, "power");
+  const activate = use(entity, "activate");
+  const locate = use(entity, "locate");
+  const error = use(entity, "error");
+  const fanSpeed = use(entity, "fan_speed");
+  const battery = use(entity, "battery") || use(entity, "battery_level");
+  if (!status && !command && !power && !activate) return [];
+  const items = [];
+  if (status) {
+    items.push({
+      component: "sensor",
+      object_id: `e${entity.index}_status`,
+      config: {
+        name: `${entity.name} status`,
+        state_topic: info.stateTopic,
+        value_template: stateTemplateFull(entity, normalizeDp(status, text)),
+        icon: "mdi:robot-vacuum",
+      },
+    });
+  }
+  if (error) {
+    const cfg = {
+      name: `${entity.name} error`,
+      state_topic: info.stateTopic,
+      value_template: boolStateTemplate(entity, error),
+      entity_category: "diagnostic",
+    };
+    items.push({ component: "binary_sensor", object_id: `e${entity.index}_error`, config: cfg });
+  }
+  if (battery) {
+    const cfg = {
+      name: `${entity.name} battery`,
+      state_topic: info.stateTopic,
+      value_template: stateTemplateFull(entity, battery),
+      device_class: "battery",
+      unit_of_measurement: "%",
+      entity_category: "diagnostic",
+    };
+    items.push({ component: "sensor", object_id: `e${entity.index}_battery`, config: cfg });
+  }
+  if (power) {
+    const cfg = {
+      name: `${entity.name} power`,
+      state_topic: info.stateTopic,
+      value_template: boolStateTemplate(entity, power),
+      command_topic: info.commandTopic,
+      command_template: commandFor(entity, normalizeDp(power, boolValue), "(true if value == 'ON' else false)", info),
+      payload_on: "ON",
+      payload_off: "OFF",
+      entity_category: "config",
+    };
+    items.push({ component: "switch", object_id: `e${entity.index}_power`, config: cfg });
+  }
+  if (fanSpeed) {
+    const options = visibleValues(fanSpeed, { normalize: text });
+    if (options.length) {
+      const cfg = {
+        name: `${entity.name} fan speed`,
+        state_topic: info.stateTopic,
+        value_template: stateTemplateFull(entity, normalizeDp(fanSpeed, text)),
+        command_topic: info.commandTopic,
+        command_template: commandFor(entity, normalizeDp(fanSpeed, text), "value", info),
+        options,
+        entity_category: "config",
+      };
+      items.push({ component: "select", object_id: `e${entity.index}_fan`, config: cfg });
+    }
+  }
+  const addStaticButton = (suffix, label, dp, value) => {
+    if (!dp) return;
+    const raw = rawForLogical(entity, dp, value);
+    if (raw === null || raw === undefined) return;
+    items.push({
+      component: "button",
+      object_id: `e${entity.index}_${suffix}`,
+      config: {
+        name: `${entity.name} ${label}`,
+        command_topic: info.commandTopic,
+        payload_press: JSON.stringify({ [dp.id]: raw }),
+        entity_category: "config",
+      },
+    });
+  };
+  if (activate) {
+    addStaticButton("start", "start", activate, true);
+    addStaticButton("pause", "pause", activate, false);
+  }
+  const commandSink = command || status;
+  if (commandSink) {
+    addStaticButton("start", "start", commandSink, "start");
+    addStaticButton("pause", "pause", commandSink, "pause");
+    addStaticButton("stop", "stop", commandSink, "stop");
+    addStaticButton("dock", "dock", commandSink, "return_to_base");
+    addStaticButton("spot", "spot clean", commandSink, "clean_spot");
+  }
+  if (locate) addStaticButton("locate", "locate", locate, true);
+  return items;
+}
+
 function buildRemote(entity, info) {
   const items = [];
   const send = use(entity, "send");
@@ -1898,6 +2000,7 @@ function buildNative(entity, info) {
     case "datetime": return buildDatetime(entity, info);
     case "lawn_mower": return buildLawnMower(entity, info);
     case "camera": return buildCamera(entity, info);
+    case "vacuum": return buildVacuum(entity, info);
     case "media_player": return buildMediaPlayer(entity, info);
     case "remote": return buildRemote(entity, info);
     case "infrared": return buildInfrared(entity, info);

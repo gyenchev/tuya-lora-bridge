@@ -309,10 +309,10 @@ pack's native Home Assistant discovery configs. All 1,779 current descriptors
 convert; the catalog has no “milestone”/unsupported gate.
 
 Native MQTT platforms cover light, fan, cover, climate, water heater,
-humidifier, lock, vacuum, alarm, siren, valve, event, time/datetime, lawn mower,
-camera, sensor, binary sensor, switch, number, select, button and text. Media
+humidifier, lock, alarm, siren, valve, event, time/datetime, lawn mower, camera,
+sensor, binary sensor, switch, number, select, button and text. Vacuums, media
 players, remotes and infrared emitters are decomposed into standard MQTT
-entities. A hidden **Raw DPs** sensor always exposes every DP as an attribute,
+controls and sensors. A hidden **Raw DPs** sensor always exposes every DP as an attribute,
 and per-DP topics are published under the raw snapshot topic.
 
 The pack path has no 4-DP/10-entity/32-mapping limits. The current firmware
@@ -501,8 +501,9 @@ web UI, writable generic entities are published as read-only sensors.
 
 The legacy manual subset still does not implement the full tuya-local schema.
 Use the browser catalog for `value_redirect`, `constraint`/`conditions`,
-bitfields, packed/base64/hex/json/unixtime DPs, climate/light/cover/fan/lock/
-vacuum and the other native platforms. The browser converter and Jinja mapping
+bitfields, packed/base64/hex/json/unixtime DPs, climate/light/cover/fan/lock
+and the other native platforms. Vacuums use decomposed controls in the browser
+path; the raw-DP sensor keeps all vacuum DPs visible. The browser converter and Jinja mapping
 engine implement those; the raw-DP sensor preserves any DP the native platform
 does not surface separately.
 

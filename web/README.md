@@ -79,14 +79,14 @@ conditional mappings, bit masks and packed-value read-modify-write.
 The converter generates native MQTT discovery for:
 
 `light`, `fan`, `cover`, `climate`, `water_heater`, `humidifier`, `lock`,
-`vacuum`, `alarm_control_panel`, `siren`, `valve`, `event`, `time`,
-`datetime`, `lawn_mower`, `camera`, `sensor`, `binary_sensor`, `switch`,
-`number`, `select`, `button` and `text`.
+`alarm_control_panel`, `siren`, `valve`, `event`, `time`, `datetime`,
+`lawn_mower`, `camera`, `sensor`, `binary_sensor`, `switch`, `number`, `select`,
+`button` and `text`.
 
-Media players, Tuya remotes and Tuya infrared emitters have no single standard
-MQTT platform; those descriptors are decomposed into switches, numbers,
-selects, buttons, text entities and sensors. All leftover DPs remain visible in
-the Raw DPs sensor.
+Vacuums, media players, Tuya remotes and Tuya infrared emitters have no single
+standard MQTT platform; those descriptors are decomposed into switches,
+numbers, selects, buttons, text entities and sensors. All leftover DPs remain
+visible in the Raw DPs sensor.
 
 ### Raw-DP sensor
 
