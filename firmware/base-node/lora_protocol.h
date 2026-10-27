@@ -14,22 +14,22 @@ constexpr size_t   LORA_HEADER_LEN  = 13;   // magic..boot_id
 constexpr size_t   LORA_TAG_LEN     = 16;
 constexpr size_t   LORA_MAX_FRAME   = LORA_HEADER_LEN + LORA_MAX_PAYLOAD + LORA_TAG_LEN;
 
-// DP snapshot transport. The charger returns the raw decrypted Tuya DP JSON
+// DP snapshot transport. The device returns the raw decrypted Tuya DP JSON
 // in bounded chunks; the base acknowledges a 32-bit bitmap and asks for any
-// missing chunks. The charger stays a dumb TCP/DP proxy; the base owns the DP
+// missing chunks. The device stays a dumb TCP/DP proxy; the base owns the DP
 // map, MQTT, and Home Assistant publication.
 constexpr size_t   DP_CHUNK_DATA_MAX = 80;
 constexpr size_t   DP_MAX_CHUNKS     = 32;
-constexpr size_t   DP_MAX_JSON       = 1024;
+constexpr size_t   DP_MAX_JSON       = 2560;
 
 enum MsgType : uint8_t {
   MSG_HELLO    = 0x01,
   MSG_ACK      = 0x02,
   MSG_LOG      = 0x03,
-  MSG_DP_QUERY = 0x04,  // base -> charger: request a raw DP snapshot
-  MSG_DP_CHUNK = 0x05,  // charger -> base: one chunk of the snapshot
-  MSG_DP_ACK   = 0x06,  // base -> charger: bitmap of received chunks
-  MSG_DP_SET   = 0x07,  // base -> charger: raw dps JSON fragment for CONTROL
+  MSG_DP_QUERY = 0x04,  // base -> device: request a raw DP snapshot
+  MSG_DP_CHUNK = 0x05,  // device -> base: one chunk of the snapshot
+  MSG_DP_ACK   = 0x06,  // base -> device: bitmap of received chunks
+  MSG_DP_SET   = 0x07,  // base -> device: raw dps JSON fragment for CONTROL
 };
 
 enum Direction : uint8_t {
@@ -58,7 +58,7 @@ enum AckResult : uint8_t {
 // ---------------------------------------------------------------------------
 // Base-local decoded state
 // ---------------------------------------------------------------------------
-// This is not a LoRa wire payload. The charger sends raw Tuya DP JSON; the
+// This is not a LoRa wire payload. The device sends raw Tuya DP JSON; the
 // base maps it into this struct and publishes the MQTT/HA state from it.
 struct StatusData {
   uint8_t  status        = ST_UNKNOWN;
@@ -78,7 +78,7 @@ struct StatusData {
   bool     rfidActive    = false;
   bool     scheduleActive = false;
   bool     chargeEnabled = false;       // raw DP 124 charge-control value
-  bool     waitingForRfid = false;      // charger reports wait_rfid
+  bool     waitingForRfid = false;      // device reports wait_rfid
 
   bool plugged() const {
     return status == ST_PLUGGED || status == ST_CHARGING ||
@@ -87,7 +87,7 @@ struct StatusData {
   bool charging() const { return status == ST_CHARGING; }
 
   // Session-oriented state for the HA charge switch. DP 124 can stay
-  // OpenCharging from a previous session, so it is ignored while the charger
+  // OpenCharging from a previous session, so it is ignored while the device
   // is waiting for RFID authorization.
   bool chargeSessionEnabled() const {
     if (status == ST_AVAILABLE || status == ST_CHARGED ||

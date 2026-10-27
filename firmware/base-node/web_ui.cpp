@@ -11,6 +11,7 @@
 #include "config.h"
 #include "config_store.h"
 #include "lora_protocol.h"
+#include "profiles.h"
 
 // Defined in base-node.ino (global namespace).
 extern PubSubClient mqtt;
@@ -22,6 +23,11 @@ extern uint32_t lastSeenMs;
 extern int lastRssi;
 extern float lastSnr;
 extern char dpJson[];
+extern bool profileMatched;
+extern char profileError[];
+extern const char *profileActiveId();
+extern const char *profileDetectedId();
+extern uint8_t profileEntityCount();
 
 namespace tuya_lora {
 
@@ -61,10 +67,11 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
   .tab-panel { display: none; padding-top: 8px; }
   .tab-panel.active { display: block; }
   label { display: block; margin: 14px 0 6px; font-weight: 600; }
-  input, select, button { font: inherit; }
-  input[type=text], input[type=password], input[type=number], select {
+  input, select, button, textarea { font: inherit; }
+  input[type=text], input[type=password], input[type=number], select, textarea {
     width: 100%; padding: 10px 12px; border: 1px solid #8886; border-radius: 8px; background: transparent; color: inherit;
   }
+  textarea { min-height: 220px; resize: vertical; font: .85rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
   .row { display: flex; gap: 8px; align-items: end; }
   .row > input { flex: 1; min-width: 0; }
   .check { display: flex; gap: 8px; align-items: center; font-weight: 400; margin-top: 8px; }
@@ -101,6 +108,7 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
     <button type="button" class="tab" data-tab="device" role="tab">Home Assistant</button>
     <button type="button" class="tab" data-tab="timing" role="tab">Timing</button>
     <button type="button" class="tab" data-tab="control" role="tab">Control</button>
+    <button type="button" class="tab" data-tab="profile" role="tab">Profile</button>
     <button type="button" class="tab" data-tab="system" role="tab">System</button>
   </div>
 
@@ -170,6 +178,24 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
     <section class="tab-panel" id="tab-control" data-tab-panel="control" role="tabpanel">
       <h2>Control</h2>
       {{FIELDS_CONTROL}}
+    </section>
+
+    <section class="tab-panel" id="tab-profile" data-tab-panel="profile" role="tabpanel">
+      <h2>Device profile</h2>
+      <div class="status">
+        <div><strong>Active:</strong> {{PROFILE_ACTIVE}}</div>
+        <div><strong>Detected:</strong> {{PROFILE_DETECTED}}</div>
+        <div><strong>Snapshot match:</strong> {{PROFILE_MATCH}}</div>
+        <div><strong>Generic entities:</strong> {{PROFILE_ENTITIES}}</div>
+        <div><strong>Note:</strong> {{PROFILE_NOTE}}</div>
+      </div>
+      <label for="profile_id">DP profile</label>
+      <select id="profile_id" name="profile_id">{{PROFILE_OPTIONS}}</select>
+      <p class="hint">Auto-detect chooses a built-in or custom profile from the DP keys in the last snapshot. Selecting a profile forces its state map. Save and reboot to apply the selection.</p>
+      <p class="hint">The Control tab DP IDs override outgoing command DPs for built-in profiles. Custom profiles define both state and command DPs in the JSON below.</p>
+      <label for="profiles_json">Custom profiles (JSON) <span class="def">optional, max 8192 bytes</span></label>
+      <textarea id="profiles_json" name="profiles_json" maxlength="8192" spellcheck="false" autocapitalize="off" autocomplete="off">{{PROFILES_JSON}}</textarea>
+      <p class="hint">Profiles can use the generic <code>entities</code> schema (tuya-local style) to expose sensors, binary sensors, switches, numbers, selects, buttons and text entities in Home Assistant. The legacy <code>state</code>/<code>control</code> map remains available for compact EV-style maps and the built-in profiles. Up to four profiles. Save the JSON and reboot once to make new profile IDs available in the dropdown, then select one and save again. Leave the box empty to remove all custom profiles. Invalid JSON is rejected and the editor keeps your text. See <code>docs/tuya-device.md</code> for the schema and examples.</p>
     </section>
 
     <section class="tab-panel" id="tab-system" data-tab-panel="system" role="tabpanel">
@@ -292,13 +318,21 @@ const char STATUS_HTML[] PROGMEM = R"HTML(<!doctype html>
     <div class="card"><span class="label">Session energy</span><strong id="session-energy">--</strong></div>
     <div class="card"><span class="label">Temperature</span><strong id="temperature">--</strong></div>
     <div class="card"><span class="label">Current limit</span><strong id="current-limit">--</strong></div>
+    <div class="card"><span class="label">Profile</span><strong id="profile">--</strong></div>
     <div class="card"><span class="label">Last seen</span><strong id="age">--</strong></div>
     <div class="card"><span class="label">LoRa</span><strong id="lora">--</strong></div>
   </div>
 
   <h2>Charger telemetry</h2>
+  <p class="muted">These fixed fields are the legacy charger state model. Generic profile entities are published on per-entity MQTT topics; see <code>docs/home-assistant.md</code>.</p>
   <table class="telemetry">
     <tr><th>Status</th><td id="t-status">--</td></tr>
+    <tr><th>Active profile</th><td id="t-profile">--</td></tr>
+    <tr><th>Selected profile</th><td id="t-profile-selected">--</td></tr>
+    <tr><th>Detected profile</th><td id="t-profile-detected">--</td></tr>
+    <tr><th>Profile match</th><td id="t-profile-match">--</td></tr>
+    <tr><th>Generic entities</th><td id="t-profile-entities">--</td></tr>
+    <tr><th>Profile note</th><td id="t-profile-note">--</td></tr>
     <tr><th>Fault flags</th><td id="t-fault">--</td></tr>
     <tr><th>Plugged</th><td id="t-plugged">--</td></tr>
     <tr><th>Charging</th><td id="t-charging">--</td></tr>
@@ -363,9 +397,16 @@ async function refresh() {
     set('session-energy', d.have_state ? fmt(d.session_energy_kwh, 2, ' kWh') : '--');
     set('temperature', d.have_state ? fmt(d.temperature_c, 1, ' °C') : '--');
     set('current-limit', d.have_state ? d.current_limit + ' A' : '--');
+    set('profile', d.profile || 'unknown');
     set('age', d.have_seen ? ago(d.age_s) : 'never');
     set('lora', d.have_seen ? d.rssi + ' dBm / ' + fmt(d.snr, 1) + ' dB' : '--');
     set('t-status', d.have_state ? d.status : 'unknown');
+    set('t-profile', d.profile || 'unknown');
+    set('t-profile-selected', d.profile_selected || 'auto');
+    set('t-profile-detected', d.profile_detected || 'unknown');
+    set('t-profile-match', d.have_state ? yesNo(d.profile_match) : 'waiting for snapshot');
+    set('t-profile-entities', d.profile_entities || 0);
+    set('t-profile-note', d.profile_error || 'none');
     set('t-fault', d.have_state ? '0x' + Number(d.fault).toString(16).padStart(4, '0') : '--');
     set('t-plugged', d.have_state ? yesNo(d.plugged) : '--');
     set('t-charging', d.have_state ? yesNo(d.charging) : '--');
@@ -428,6 +469,9 @@ String htmlEscape(const char *text) {
       case '>': out += "&gt;"; break;
       case '"': out += "&quot;"; break;
       case '\'': out += "&#39;"; break;
+      // Prevent user text from being re-expanded as a template placeholder.
+      case '{': out += "&#123;"; break;
+      case '}': out += "&#125;"; break;
       default: out += *p; break;
     }
   }
@@ -1104,7 +1148,7 @@ void sendResult(const String &title, const String &detail) {
 }
 
 void renderForm(const BaseSettings &s, const String &error, int status,
-                const String &tab) {
+                const String &tab, const char *customJson = nullptr) {
   String page = FPSTR(BASE_HTML);
   page.replace("{{FW_VERSION}}", FW_VERSION);
   page.replace("{{IP}}", ipText());
@@ -1137,6 +1181,22 @@ void renderForm(const BaseSettings &s, const String &error, int status,
   page.replace("{{SETUP_AP_PASSWORD_PLACEHOLDER}}",
                "leave blank to keep current");
   page.replace("{{SETUP_AP_CHANNEL_OPTIONS}}", setupApChannelOptions(s));
+  page.replace("{{PROFILE_ACTIVE}}", htmlEscape(profileActiveId()));
+  page.replace("{{PROFILE_DETECTED}}", htmlEscape(profileDetectedId()));
+  page.replace("{{PROFILE_MATCH}}",
+               !haveState ? "waiting for snapshot"
+                          : (profileMatched ? "yes" : "no"));
+  if (profileError[0]) {
+    page.replace("{{PROFILE_NOTE}}", htmlEscape(profileError));
+  } else {
+    page.replace("{{PROFILE_NOTE}}", "none");
+  }
+  page.replace("{{PROFILE_OPTIONS}}", profileOptions(s.profileId));
+  page.replace("{{PROFILE_ENTITIES}}", String(profileEntityCount()));
+  // Keep the JSON replacement last so profile text cannot be expanded as a
+  // template placeholder.
+  page.replace("{{PROFILES_JSON}}",
+               htmlEscape(customJson ? customJson : profilesCustomJson()));
   server->sendHeader("Cache-Control", "no-store");
   server->send(status, "text/html", page);
 }
@@ -1218,7 +1278,19 @@ void handleApiStatus() {
   json += String(lastStatus.tempDc / 10.0f, 1);
   json += ",\"charge_seconds\":";
   json += String(lastStatus.chargeSeconds);
-  json += ",\"dp_json\":\"";
+  json += ",\"profile\":\"";
+  json += jsonEscape(profileActiveId());
+  json += "\",\"profile_selected\":\"";
+  json += jsonEscape(settings.profileId);
+  json += "\",\"profile_detected\":\"";
+  json += jsonEscape(profileDetectedId());
+  json += "\",\"profile_match\":";
+  json += (profileMatched ? "true" : "false");
+  json += ",\"profile_entities\":";
+  json += String(profileEntityCount());
+  json += ",\"profile_error\":\"";
+  json += jsonEscape(profileError);
+  json += "\",\"dp_json\":\"";
   json += jsonEscape(dpJson);
   json += "\"}";
   server->sendHeader("Cache-Control", "no-store");
@@ -1327,6 +1399,10 @@ void handleSave() {
   }
 
   BaseSettings next = settings;
+  copyArg("profile_id", next.profileId, sizeof(next.profileId), false);
+  const String customJson = server->hasArg("profiles_json")
+                                ? server->arg("profiles_json")
+                                : String(profilesCustomJson());
   copyArg("wifi_ssid", next.wifiSsid, sizeof(next.wifiSsid), false);
   copyArg("wifi_password", next.wifiPassword, sizeof(next.wifiPassword), true);
   if (server->hasArg("clear_wifi_password")) next.wifiPassword[0] = '\0';
@@ -1338,7 +1414,8 @@ void handleSave() {
 
   const long port = server->arg("mqtt_port").toInt();
   if (port < 1 || port > 65535) {
-    renderForm(next, "MQTT port must be between 1 and 65535.", 400, "mqtt");
+    renderForm(next, "MQTT port must be between 1 and 65535.", 400, "mqtt",
+               customJson.c_str());
     return;
   }
   next.mqttPort = static_cast<uint16_t>(port);
@@ -1353,7 +1430,7 @@ void handleSave() {
   const long apChannel = server->arg("setup_ap_channel").toInt();
   if (apChannel < 1 || apChannel > 13) {
     renderForm(next, "Setup AP channel must be between 1 and 13.", 400,
-               "system");
+               "system", customJson.c_str());
     return;
   }
   next.setupApChannel = static_cast<uint8_t>(apChannel);
@@ -1361,17 +1438,32 @@ void handleSave() {
   String error;
   String tab = "system";
   if (!applyAdvancedFields(next, error, tab)) {
-    renderForm(next, error, 400, tab);
+    renderForm(next, error, 400, tab, customJson.c_str());
     return;
   }
   if (!validate(next, error, tab)) {
-    renderForm(next, error, 400, tab);
+    renderForm(next, error, 400, tab, customJson.c_str());
+    return;
+  }
+  if (!profilesValidateCustomJson(customJson.c_str(), error)) {
+    renderForm(next, String("Custom profiles: ") + error, 400, "profile",
+               customJson.c_str());
+    return;
+  }
+  if (!profilesSelectionValid(next.profileId, customJson.c_str(), error)) {
+    renderForm(next, error, 400, "profile", customJson.c_str());
     return;
   }
 
   settings = next;
   if (!saveSettings()) {
-    renderForm(next, "Could not write settings to NVS.", 500, tab);
+    renderForm(next, "Could not write settings to NVS.", 500, tab,
+               customJson.c_str());
+    return;
+  }
+  if (!profilesSaveCustomToNvs(customJson.c_str(), error)) {
+    renderForm(next, String("Could not save custom profiles: ") + error, 500,
+               "profile", customJson.c_str());
     return;
   }
   bootGuardClear();
@@ -1385,6 +1477,7 @@ void handleSave() {
 void handleFactory() {
   bootGuardClear();
   clearSettings();
+  profilesClearCustom();
   sendResult("Factory reset",
              "All settings were cleared. The base is rebooting into setup mode "
              "at http://192.168.4.1:" + String(settings.webUiPort) + "/.");

@@ -95,6 +95,7 @@ void setDefaults(BaseSettings &s) {
   copyText(s.haDeviceId, sizeof(s.haDeviceId), HA_DEVICE_ID);
 
   s.enableCommands = ENABLE_COMMANDS != 0;
+  copyText(s.profileId, sizeof(s.profileId), DEFAULT_PROFILE_ID);
   s.minCurrent = CHARGER_MIN_CURRENT;
   s.maxCurrent = CHARGER_MAX_CURRENT;
   s.minDelayH = CHARGER_MIN_DELAY_H;
@@ -169,6 +170,9 @@ void sanitize(BaseSettings &s) {
   if (s.displayOnMs < 1000) s.displayOnMs = DISPLAY_ON_MS;
   if (s.splashMs > 60000) s.splashMs = SPLASH_MS;
 
+  if (s.profileId[0] == '\0') {
+    copyText(s.profileId, sizeof(s.profileId), DEFAULT_PROFILE_ID);
+  }
   if (s.minCurrent < 1 || s.minCurrent > 63) {
     s.minCurrent = CHARGER_MIN_CURRENT;
   }
@@ -354,6 +358,8 @@ void loadSettings() {
 
       settings.enableCommands =
           prefs.getBool("cmd_en", settings.enableCommands);
+      readText(prefs, "profile_id", settings.profileId,
+               sizeof(settings.profileId));
       settings.minCurrent = prefs.getUChar("cur_min", settings.minCurrent);
       settings.maxCurrent = prefs.getUChar("cur_max", settings.maxCurrent);
       settings.minDelayH = prefs.getUChar("dly_min", settings.minDelayH);
@@ -416,6 +422,7 @@ void loadSettings() {
   settings.mqttTopicCmdQuery[sizeof(settings.mqttTopicCmdQuery) - 1] = '\0';
   settings.haDiscoveryPrefix[sizeof(settings.haDiscoveryPrefix) - 1] = '\0';
   settings.haDeviceId[sizeof(settings.haDeviceId) - 1] = '\0';
+  settings.profileId[sizeof(settings.profileId) - 1] = '\0';
 }
 
 bool saveSettings() {
@@ -486,6 +493,7 @@ bool saveSettings() {
   ok = putText(prefs, "ha_dev_id", settings.haDeviceId) && ok;
 
   ok = (prefs.putBool("cmd_en", settings.enableCommands) > 0) && ok;
+  ok = putText(prefs, "profile_id", settings.profileId) && ok;
   ok = (prefs.putUChar("cur_min", settings.minCurrent) > 0) && ok;
   ok = (prefs.putUChar("cur_max", settings.maxCurrent) > 0) && ok;
   ok = (prefs.putUChar("dly_min", settings.minDelayH) > 0) && ok;

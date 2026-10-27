@@ -71,13 +71,28 @@ interrupts its mains supply.
 
 - Sends `DP_QUERY` every 60 seconds, verifies AES-GCM and replay protection,
   reassembles chunks, and acknowledges the chunk bitmap.
-- Detects the DP profile, maps it to a stable state model, and publishes the raw
-  snapshot to retained `tuya-lora/charger/dps`.
+- Detects the DP profile, or uses the manual profile selected in NVS, maps it to
+  a stable state model, and publishes the raw snapshot to retained
+  `tuya-lora/charger/dps`.
 - Publishes retained `tuya-lora/charger/state`, `tuya-lora/charger/link` and
   `tuya-lora/charger/availability` topics.
-- Subscribes to command topics, maps them to profile-specific `dps` fragments,
-  sends `DP_SET`, waits for `ACK`, and publishes the result.
-- Publishes Home Assistant MQTT discovery configs.
+- Stores the built-in profile registry and up to four validated custom profiles
+  in the base node. A profile owns both the incoming state map and the outgoing
+  command map; the remote stays a raw DP proxy.
+- Supports two descriptor styles. The built-in Feyree/F-OBZ2 compatibility
+  profiles and compact custom profiles use the fixed charger state model. A
+  generic custom profile uses a tuya-local-style `entities` list; the base then
+  generates discovery, per-entity state topics and per-entity commands without
+  any device-specific code.
+- Compiles generic entities into `sensor`, `binary_sensor`, `switch`, `number`,
+  `select`, `button` and `text` MQTT components, including value mappings,
+  scaling, ranges, enum options and extra DP attributes.
+- Subscribes to legacy and generic command topics, maps them to the active
+  profile's `dps` fragments, sends `DP_SET`, waits for `ACK`, and publishes the
+  result. Control is rejected when the active profile is the read-only fallback
+  or does not match the last snapshot.
+- Publishes Home Assistant MQTT discovery configs and clears stale entities when
+  the active profile changes.
 - Serves a live status page and settings UI on the home WiFi.
 - Stores WiFi, MQTT, LoRa, HA, topic and control settings in ESP32 NVS.
 - Marks the remote link unavailable after 10 minutes without a valid frame.
@@ -98,8 +113,11 @@ link diagnostics for monitoring, notifications and slow charging control.
    frames.
 3. The base reassembles chunks, sends `DP_ACK`, and requests missing chunks.
 4. The base publishes the raw snapshot to `tuya-lora/charger/dps` (retained).
-5. The base detects the profile, maps it to the bridge state model, and
-   publishes `tuya-lora/charger/state` (retained).
+5. The base resolves the active profile (`auto` detection or the manual NVS
+   selection), maps it to the bridge state model, and publishes
+   `tuya-lora/charger/state` (retained). For a generic profile it additionally
+   publishes one state object per entity under
+   `tuya-lora/charger/state/entities/eN`.
 6. The base publishes `tuya-lora/charger/link` diagnostics on every valid LoRa
    frame, independent of the device snapshot.
 7. The base publishes availability `online`; Home Assistant updates the
@@ -174,7 +192,7 @@ Remote node                         Base node
 ### Bandwidth and latency
 
 LoRa is a low-rate packet link, not an IP transport. The bridge carries a raw DP
-snapshot of up to 1024 bytes in 80-byte chunks, plus short control fragments.
+snapshot of up to 2560 bytes in 80-byte chunks, plus short control fragments.
 
 - A full snapshot is requested every 60 seconds.
 - A successful command triggers a fresh snapshot after a short delay.

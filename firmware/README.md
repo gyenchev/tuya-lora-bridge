@@ -23,8 +23,14 @@ firmware/
 │   ├── config.h
 │   ├── config_store.cpp
 │   ├── config_store.h
+│   ├── entities.cpp
+│   ├── entities.h
+│   ├── ha_discovery.cpp
+│   ├── ha_discovery.h
 │   ├── lora_protocol.cpp
 │   ├── lora_protocol.h
+│   ├── profiles.cpp
+│   ├── profiles.h
 │   ├── sd_update.cpp
 │   ├── sd_update.h
 │   ├── web_ui.cpp
@@ -119,7 +125,8 @@ the nodes on trusted networks.
 | LoRa | PSK (32 hex characters), frequency, sync word, TX power, spreading factor, bandwidth, coding rate and preamble |
 | Home Assistant | Device name, timezone, discovery prefix and stable device identifier |
 | Timing | Offline timeout, snapshot/chunk timeouts, retry intervals, WiFi/MQTT reconnect intervals and display timings |
-| Control | Command enable, current/delay limits and DP IDs for each supported profile |
+| Control | Command enable, current/delay limits and legacy DP overrides for built-in profiles |
+| Profile | Auto-detect or manual profile selection, live detected/active/match status, and the custom profile JSON editor |
 | System | Setup AP credentials, web UI port, SD firmware filename and SD update countdown |
 
 ### Remote node settings
@@ -140,6 +147,19 @@ they describe the board or wire format.
 If validation fails, the form reopens on the tab containing the error. The LoRa
 PSK must be identical on both nodes. Changing the device AP SSID or password
 requires re-pairing the Tuya device.
+
+Built-in profiles own both state decoding and command encoding. The DP ID fields
+in the **Control** tab override only the outgoing command DPs for the three
+built-in profiles; the incoming state map remains fixed. Custom profiles can use
+either the compact legacy `state`/`control` map or a tuya-local-style `entities`
+list. Generic entities publish their own Home Assistant discovery, per-entity
+state topics and generic command topics, so future devices do not require
+firmware changes. Invalid custom JSON is rejected without replacing the last
+valid profile set, and the editor keeps the submitted text so it can be
+corrected. A profile selection can only refer to `auto`, a built-in profile or a
+profile in the submitted custom JSON. New custom profile IDs appear in the
+dropdown after saving and rebooting once; select one and save again to make it
+active.
 
 ### Setup AP recovery
 
@@ -177,29 +197,36 @@ mapping lives on the base node and can be changed without reflashing the remote.
 
 1. Joins the home WiFi and connects to MQTT. Serves the status page at its
    home-WiFi address and settings at `/settings`.
-2. Publishes retained Home Assistant discovery configs.
+2. Publishes retained Home Assistant discovery configs for the selected profile.
+   Built-in profiles use the legacy charger entities; generic profiles publish
+   one config per descriptor entity.
 3. Listens for LoRa frames using the configured radio settings.
 4. Verifies the AES-GCM tag and rejects duplicate or old sequence numbers per
    remote boot ID.
 5. Sends `DP_QUERY` every 60 seconds, reassembles chunks, and publishes the raw
    snapshot to retained `tuya-lora/charger/dps`.
-6. Detects the DP profile, maps it to `tuya-lora/charger/state`, and publishes
-   retained availability.
+6. Detects the DP profile, or uses the manually selected profile, maps it to the
+   legacy state topic and, for generic profiles, to the per-entity state topics,
+   then publishes retained availability.
 7. Publishes `tuya-lora/charger/link` on every valid LoRa frame and every
    10 seconds while the remote link is online, so RSSI, SNR and last-seen data
    are available before the device itself is reachable.
-8. Maps MQTT commands to the profile's DP IDs, sends `DP_SET`, and publishes the
-   result to `tuya-lora/charger/command/result`.
-9. Marks the remote link offline after 10 minutes without a valid frame.
-10. Turns the OLED panel off 10 minutes after boot to reduce burn-in.
+8. Maps legacy MQTT commands and generic entity commands to the active
+   profile's control map, sends `DP_SET`, and publishes the result to
+   `tuya-lora/charger/command/result`.
+9. Rejects control when the active profile is the read-only fallback or when the
+   selected profile does not match the last snapshot.
+10. Marks the remote link offline after 10 minutes without a valid frame.
+11. Turns the OLED panel off 10 minutes after boot to reduce burn-in.
 
 The base node is normally a WiFi station. It creates an AP only for initial
 configuration or when the configured WiFi is unreachable.
 
-Control is accepted only after the base has received a valid snapshot and
-detected a supported profile. A command is rejected while another command or a
-snapshot is in progress. A command timeout is not retried automatically because
-the command may already have been applied.
+Control is accepted only after the base has received a valid snapshot and the
+active profile matches that snapshot. The internal fallback profile is read-only,
+so an unrecognized device is monitored but not controlled. A command is rejected
+while another command or a snapshot is in progress. A command timeout is not
+retried automatically because the command may already have been applied.
 
 ## OLED and serial output
 

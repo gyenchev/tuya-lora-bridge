@@ -20,7 +20,7 @@ constexpr size_t   LORA_MAX_FRAME   = LORA_HEADER_LEN + LORA_MAX_PAYLOAD + LORA_
 // map, MQTT, and Home Assistant publication.
 constexpr size_t   DP_CHUNK_DATA_MAX = 80;
 constexpr size_t   DP_MAX_CHUNKS     = 32;
-constexpr size_t   DP_MAX_JSON       = 1024;
+constexpr size_t   DP_MAX_JSON       = 2560;
 
 enum MsgType : uint8_t {
   MSG_HELLO    = 0x01,

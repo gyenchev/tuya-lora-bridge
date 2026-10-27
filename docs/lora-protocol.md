@@ -74,7 +74,7 @@ does not interpret DP numbers.
 1. The base sends `DP_QUERY` with a 16-bit `req_id`.
 2. The remote calls `tuya.query()` and splits the raw response JSON into
    `DP_CHUNK` frames. Each chunk carries up to 80 bytes; a snapshot is capped at
-   1024 bytes or 32 chunks.
+   2560 bytes or 32 chunks.
 3. The base reassembles the chunks, sends `DP_ACK` with a 32-bit bitmap of the
    chunks it has, and asks for missing chunks again if needed.
 4. The remote retransmits only the missing chunks after a short timeout.
@@ -83,7 +83,9 @@ does not interpret DP numbers.
    query.
 
 A full snapshot is requested every 60 seconds. The base marks the remote link
-offline after 10 minutes without a valid frame or chunk.
+offline after 10 minutes without a valid frame or chunk. The raw snapshot is
+published to MQTT unchanged, so the MQTT buffer must be at least as large as the
+snapshot; the default 4096-byte buffer covers the 2560-byte snapshot cap.
 
 ## DP_SET payload
 
@@ -263,7 +265,7 @@ The base publishes `tuya-lora/charger/link` on every valid LoRa frame and every
   "seq": 42,
   "boot_id": 123456789,
   "last_seen": "2026-10-22T11:32:05Z",
-  "fw": "0.2.1"
+  "fw": "0.4.0"
 }
 ```
 
