@@ -404,7 +404,13 @@ function parseDps(d) {
 }
 
 function telemetryText(field, dps) {
-  const raw = dps[field.dp];
+  let key = field.dp;
+  if (dps[key] === undefined || dps[key] === null) {
+    for (const fallback of field.fallbacks || []) {
+      if (dps[fallback] !== undefined && dps[fallback] !== null) { key = fallback; break; }
+    }
+  }
+  const raw = dps[key];
   if (raw === undefined || raw === null) return '--';
   if (field.kind === 'bool') {
     let value;

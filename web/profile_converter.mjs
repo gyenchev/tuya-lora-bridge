@@ -2234,6 +2234,16 @@ export function buildTelemetry(yaml) {
         dp: dp.id,
         kind,
       };
+      if (dpIndex === 0 && ["number", "select"].includes(raw.entity)) {
+        const primaryType = asArray(raw.dps)[0]?.type;
+        const fallbacks = asArray(raw.dps).slice(1)
+          .filter((candidate) => candidate && candidate.type === primaryType &&
+            !/minimum|maximum/i.test(text(candidate.name)))
+          .map((candidate) => String(candidate.id))
+          .filter((candidate) => candidate !== dp.id);
+        const unique = [...new Set(fallbacks)].slice(0, 4);
+        if (unique.length) field.fallbacks = unique;
+      }
       if (kind === "bool") {
         const values = telemetryTrueValues(dp);
         if (values.length) field.values = values;

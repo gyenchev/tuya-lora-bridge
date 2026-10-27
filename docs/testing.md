@@ -82,7 +82,7 @@ to MQTT and Home Assistant.
   back to raw DP rows when a pack has no telemetry metadata.
 - [ ] Status-page top tiles show only link/profile information, not charger-only
   state/power/energy tiles.
-- [ ] Base OLED shows `Device: available/check/unknown` and `Profile: <name>`,
+- [ ] Base OLED shows `Device: available/mismatch/unknown` and `Profile: <name>`,
   not `Charger`/`Power` rows.
 - [ ] Home Assistant entity IDs are unchanged after adding profile fields.
 

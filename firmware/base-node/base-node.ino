@@ -318,9 +318,9 @@ void drawScreen() {
   if (!haveState) {
     display.println("unknown");
   } else if (!profileMatched) {
-    display.println("check");
+    display.println("mismatch");
   } else {
-    display.println("ready");
+    display.println("available");
   }
 
   display.print("Profile: ");

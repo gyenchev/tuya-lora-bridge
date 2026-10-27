@@ -234,7 +234,7 @@ mapping lives on the base node and can be changed without reflashing the remote.
 
 The base status page shows link/profile tiles and a profile-driven **Device
 telemetry** table; packs without telemetry metadata fall back to raw DPs. The
-OLED shows device readiness (`available`/`check`/`unknown`) and the active
+OLED shows device readiness (`available`/`mismatch`/`unknown`) and the active
 profile name instead of charger-only status/power rows.
 
 The base node is normally a WiFi station. It creates an AP only for initial
