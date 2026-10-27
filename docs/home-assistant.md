@@ -207,6 +207,11 @@ The link diagnostics below are published by the base for every profile.
 These entities work independently of the device state. They show whether the
 LoRa link is alive even when the Tuya device is unreachable.
 
+Additional transfer telemetry — frame/byte counts, burst and per-frame speeds,
+60-minute duty cycle and DP snapshot speed — is available only on the base
+status page and in `/api/status`. It is deliberately not published to MQTT or
+Home Assistant.
+
 ### Control
 
 Controls are defined by the active profile's discovery entries and command

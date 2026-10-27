@@ -24,6 +24,13 @@ connected to MQTT and Home Assistant.
 - [ ] A deliberately dropped chunk is recovered by the retransmit path.
 - [ ] Range and RSSI/SNR are stable at the installed positions.
 - [ ] The measured frame rate stays within the EU duty-cycle budget.
+- [ ] `/api/status` contains `lora_stats` with PHY, totals, RX/TX bursts,
+  last-frame speeds, the 60-minute duty window, DP-snapshot and error counters;
+  the status page renders them.
+- [ ] After a snapshot, the last-frame speed, burst speed, wire bytes and DP
+  snapshot speed change; the duty percentages stay against the fixed 3600 s
+  window and do not decay while idle.
+- [ ] The LoRa statistics are absent from the MQTT link/state/discovery payloads.
 
 ### MQTT and Home Assistant
 

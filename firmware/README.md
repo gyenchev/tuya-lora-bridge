@@ -118,7 +118,10 @@ home WiFi cannot be reached within the fallback delay (20 seconds by default).
 
 Each node serves:
 
-- a read-only **Status** page at `/`, refreshed from `/api/status`;
+- a read-only **Status** page at `/`, refreshed from `/api/status`; it includes
+  base-local LoRa transfer telemetry (frames, wire/payload bytes, burst and
+  per-frame speeds, last frames, 60-minute duty cycle and DP snapshot speed)
+  that is not published to MQTT or Home Assistant;
 - a tabbed **Settings** page at `/settings` with a **Save and reboot** button.
 
 All runtime settings are stored in NVS. The web UI is unauthenticated, so keep
@@ -227,7 +230,9 @@ mapping lives on the base node and can be changed without reflashing the remote.
 11. Turns the OLED panel off 10 minutes after boot to reduce burn-in.
 
 The base status page shows link/profile tiles and a profile-driven **Device
-telemetry** table; packs without telemetry metadata fall back to raw DPs. The
+telemetry** table; packs without telemetry metadata fall back to raw DPs. It
+also shows a **LoRa link telemetry** table with per-frame/burst speeds, byte
+counts, DP snapshot speed, message mix and the rolling 60-minute duty cycle. The
 OLED shows device readiness (`available`/`unknown`) and the active profile name
 instead of charger-only status/power rows.
 

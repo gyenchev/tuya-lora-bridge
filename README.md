@@ -70,6 +70,9 @@ The Tuya device stays on its own local protections and schedules.
 - Profile-driven **Device telemetry** on the status page, with a raw-DP fallback;
   the top status tiles are limited to link/profile data and the base OLED shows
   device availability and the active profile instead of charger-only rows.
+- Base-local LoRa transfer telemetry on the status page: per-frame and burst
+  speeds, wire/payload byte counts, DP snapshot speed, message mix and a rolling
+  60-minute duty-cycle view. It is not published to MQTT or Home Assistant.
 - Streaming profile-pack storage (metadata + one small file per discovery
   entity) in a 384 KB LittleFS partition; no single-JSON pack memory ceiling.
 - Web UI for all runtime settings; settings are stored in ESP32 NVS.

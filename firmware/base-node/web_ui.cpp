@@ -13,12 +13,14 @@
 #include "config_store.h"
 #include "ha_discovery.h"
 #include "lora_protocol.h"
+#include "lora_stats.h"
 #include "profiles.h"
 #include "web_assets.h"
 
 // Defined in base-node.ino (global namespace).
 extern PubSubClient mqtt;
 extern tuya_lora::StatusData lastStatus;
+extern tuya_lora::LoraStats loraStats;
 extern bool haveState;
 extern bool haveSeen;
 extern bool remoteOnline;
@@ -309,6 +311,26 @@ const char STATUS_HTML[] PROGMEM = R"HTML(<!doctype html>
     <div class="card"><span class="label">LoRa</span><strong id="lora">--</strong></div>
   </div>
 
+  <h2>LoRa link telemetry</h2>
+  <p class="muted">Measured locally on the base; this is not published to MQTT or Home Assistant.</p>
+  <table class="telemetry">
+    <tr><th>Radio</th><td id="lora-phy">--</td></tr>
+    <tr><th>Nominal bitrate</th><td id="lora-bitrate">--</td></tr>
+    <tr><th>RX burst</th><td id="lora-rx-burst">--</td></tr>
+    <tr><th>TX burst</th><td id="lora-tx-burst">--</td></tr>
+    <tr><th>Last RX frame</th><td id="lora-last-rx">--</td></tr>
+    <tr><th>Last TX frame</th><td id="lora-last-tx">--</td></tr>
+    <tr><th>DP snapshot</th><td id="lora-dp">--</td></tr>
+    <tr><th>Frames (total)</th><td id="lora-frames">--</td></tr>
+    <tr><th>Wire bytes (total)</th><td id="lora-bytes">--</td></tr>
+    <tr><th>Payload bytes (total)</th><td id="lora-payload">--</td></tr>
+    <tr><th>Airtime (since boot)</th><td id="lora-airtime">--</td></tr>
+    <tr><th>Duty cycle (60 min)</th><td id="lora-duty">--</td></tr>
+    <tr><th>Message mix</th><td id="lora-types">--</td></tr>
+    <tr><th>Errors</th><td id="lora-errors">--</td></tr>
+  </table>
+  <p class="muted">Duty cycle uses a fixed 60-minute window and a 1% reference for EU 868.0–868.6 MHz. Base TX is the base's own airtime; remote TX is inferred from received frames.</p>
+
   <h2>Profile</h2>
   <table class="telemetry">
     <tr><th>Active profile</th><td id="t-profile">--</td></tr>
@@ -335,6 +357,135 @@ function ago(seconds) {
   if (seconds < 60) return Math.floor(seconds) + 's ago';
   if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
   return Math.floor(seconds / 3600) + 'h ago';
+}
+function fmtBytes(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '--';
+  const n = Number(value);
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KiB';
+  return (n / 1048576).toFixed(2) + ' MiB';
+}
+function fmtRate(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '--';
+  return Number(value).toFixed(1) + ' B/s';
+}
+function fmtDuration(ms) {
+  if (ms === null || ms === undefined || Number.isNaN(Number(ms))) return '--';
+  const n = Number(ms);
+  if (n < 1000) return n.toFixed(n < 10 ? 1 : 0) + ' ms';
+  return (n / 1000).toFixed(1) + ' s';
+}
+function fmtWindow(seconds) {
+  if (seconds === null || seconds === undefined || Number.isNaN(Number(seconds))) return '--';
+  if (seconds >= 3600) return '60 min';
+  if (seconds >= 60) return (seconds / 60).toFixed(1) + ' min';
+  return fmtDuration(seconds * 1000);
+}
+function fmtAge(ms) {
+  if (ms === null || ms === undefined || ms < 0) return 'never';
+  if (ms < 1000) return Math.round(ms) + ' ms ago';
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return seconds + ' s ago';
+  if (seconds < 3600) return Math.floor(seconds / 60) + ' min ago';
+  return Math.floor(seconds / 3600) + ' h ago';
+}
+function renderLora(s) {
+  const ids = ['lora-phy', 'lora-bitrate', 'lora-rx-burst', 'lora-tx-burst',
+               'lora-last-rx', 'lora-last-tx', 'lora-dp', 'lora-frames',
+               'lora-bytes', 'lora-payload', 'lora-airtime', 'lora-duty',
+               'lora-types', 'lora-errors'];
+  if (!s || !s.phy) {
+    for (const id of ids) set(id, '--');
+    return;
+  }
+  const phy = s.phy;
+  set('lora-phy', phy.frequency_mhz.toFixed(1) + ' MHz · SF' + phy.spreading_factor +
+      ' · BW ' + phy.bandwidth_khz + ' kHz · CR 4/' + phy.coding_rate +
+      ' · ' + phy.tx_power_dbm + ' dBm');
+  set('lora-bitrate', fmt(phy.bitrate_bps, 0, ' bit/s') +
+      ' (≈' + fmt(phy.bitrate_bps / 8, 0, ' B/s') + ')');
+
+  function burstText(b, activeLabel) {
+    if (!b || !b.frames) return 'none';
+    return (b.active ? activeLabel : 'last') + ' · ' + b.frames + ' frame' +
+      (b.frames === 1 ? '' : 's') + ' · ' + fmtBytes(b.wire_bytes) + ' wire / ' +
+      fmtBytes(b.payload_bytes) + ' payload · ' + fmtDuration(b.duration_ms) +
+      ' · ' + fmtRate(b.wire_bps) + ' wire / ' + fmtRate(b.payload_bps) +
+      ' payload' + (b.active ? '' : ' · ' + fmtAge(b.age_ms));
+  }
+  set('lora-rx-burst', burstText(s.rx_burst, 'receiving'));
+  set('lora-tx-burst', burstText(s.tx_burst, 'transmitting'));
+
+  const t = s.totals || {};
+  set('lora-frames', (t.rx_frames || 0) + ' RX / ' + (t.tx_frames || 0) + ' TX');
+  set('lora-bytes', fmtBytes(t.rx_bytes) + ' RX / ' + fmtBytes(t.tx_bytes) + ' TX');
+  set('lora-payload', fmtBytes(t.rx_payload_bytes) + ' RX / ' +
+      fmtBytes(t.tx_payload_bytes) + ' TX');
+  set('lora-airtime', fmtDuration(t.rx_airtime_ms) + ' RX / ' +
+      fmtDuration(t.tx_airtime_ms) + ' TX · ' + fmt(t.airtime_percent, 2, '%') +
+      ' of uptime');
+
+  const duty = s.duty || {};
+  if (duty.window_s) {
+    const limit = duty.limit_percent;
+    set('lora-duty',
+        'base TX ' + fmt(duty.tx_percent, 3, '%') +
+        (duty.tx_percent <= limit ? ' OK' : ' OVER') +
+        ' · remote TX ' + fmt(duty.rx_percent, 3, '%') +
+        (duty.rx_percent <= limit ? ' OK' : ' OVER') +
+        ' · combined ' + fmt(duty.total_percent, 3, '%') +
+        ' · limit ' + fmt(limit, 1, '%') + ' each · 60 min window · ' +
+        fmtWindow(duty.observed_s) + ' observed · base budget left ' +
+        fmtDuration(duty.tx_remaining_ms));
+  } else {
+    set('lora-duty', '--');
+  }
+
+  const last = s.last || {};
+  const rx = last.rx || {};
+  set('lora-last-rx', rx.age_ms < 0
+      ? 'none'
+      : fmtAge(rx.age_ms) + ' · ' + rx.frame_bytes + ' B wire / ' +
+        rx.payload_bytes + ' B payload · ' + fmtDuration(rx.airtime_ms) +
+        ' · ' + fmtRate(rx.wire_bps) + ' wire / ' + fmtRate(rx.payload_bps) +
+        ' payload · ' + rx.rssi + ' dBm / ' + fmt(rx.snr, 1, ' dB'));
+  const tx = last.tx || {};
+  set('lora-last-tx', tx.age_ms < 0
+      ? 'none'
+      : fmtAge(tx.age_ms) + ' · ' + tx.frame_bytes + ' B wire / ' +
+        tx.payload_bytes + ' B payload · ' + fmtDuration(tx.airtime_ms) +
+        ' · ' + fmtRate(tx.wire_bps) + ' wire / ' + fmtRate(tx.payload_bps) +
+        ' payload');
+
+  const dp = s.dp || {};
+  if (dp.active) {
+    set('lora-dp', 'receiving ' + dp.current_bytes + ' B in ' +
+        dp.current_chunks + ' chunks');
+  } else if (dp.snapshots || dp.failures) {
+    let text = (dp.snapshots || 0) + ' complete / ' + (dp.failures || 0) + ' failed';
+    if (dp.last_ms) {
+      text += ' · last ' + fmtBytes(dp.last_bytes) + ' payload in ' +
+              fmtDuration(dp.last_ms) + ' (' + fmtRate(dp.last_bps) +
+              ' payload)';
+    }
+    if (dp.last_age_ms >= 0) text += ' · ' + fmtAge(dp.last_age_ms);
+    set('lora-dp', text);
+  } else {
+    set('lora-dp', 'waiting for first snapshot');
+  }
+
+  function mix(counts) {
+    const entries = Object.entries(counts || {}).filter(([, value]) => Number(value) > 0);
+    return entries.length
+      ? entries.map(([name, value]) => name + ' ' + value).join(' · ')
+      : 'none';
+  }
+  const types = s.types || {};
+  set('lora-types', 'RX ' + mix(types.rx) + ' / TX ' + mix(types.tx));
+
+  const e = s.errors || {};
+  set('lora-errors', (e.rx_decode || 0) + ' decode / ' + (e.rx_replay || 0) +
+      ' replay / ' + (e.tx || 0) + ' TX');
 }
 let telemetryFields = [];
 let telemetryProfile = null;
@@ -450,6 +601,7 @@ async function refresh() {
     set('profile', d.profile || 'unknown');
     set('age', d.have_seen ? ago(d.age_s) : 'never');
     set('lora', d.have_seen ? d.rssi + ' dBm / ' + fmt(d.snr, 1) + ' dB' : '--');
+    renderLora(d.lora_stats);
     set('t-profile', d.profile || 'none');
     set('t-profile-entities', d.profile_entities || 0);
     set('t-profile-note', d.profile_error || 'none');
@@ -1179,7 +1331,16 @@ void handleApiStatus() {
   json += jsonEscape(profileError);
   json += "\",\"dp_json\":\"";
   json += jsonEscape(dpJson);
-  json += "\"}";
+  json += "\"";
+
+  JsonDocument loraDoc;
+  loraStats.toJson(loraDoc.to<JsonObject>(), millis());
+  String loraJson;
+  loraJson.reserve(1200);
+  serializeJson(loraDoc, loraJson);
+  json += ",\"lora_stats\":";
+  json += loraJson;
+  json += "}";
   server->sendHeader("Cache-Control", "no-store");
   server->send(200, "application/json", json);
 }
