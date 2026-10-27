@@ -214,9 +214,10 @@ function emitTransform(entity, dp, ctx, varName, rule, depth) {
     const target = dpNameToDp(entity, rule.value_redirect);
     if (target) {
       const value = stateValueForDp(entity, target, ctx, "dps", depth);
+      code += `{% if ${varName} is none %}\n`;
       code += value.code;
       code += `{% set ${varName} = ${value.var} %}\n`;
-      terminal = true;
+      code += `{% endif %}\n`;
     }
   } else if (rule.value_mirror) {
     const target = dpNameToDp(entity, rule.value_mirror);
@@ -335,7 +336,7 @@ function emitAssignRule(entity, dp, ctx, rawVar, outVar, rule, depth, isDefault 
   }
 
   const transform = emitTransform(entity, dp, ctx, outVar, rule, depth);
-  if (!transform.terminal) code += transform.code;
+  code += transform.code;
   return code;
 }
 
