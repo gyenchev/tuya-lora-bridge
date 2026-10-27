@@ -21,5 +21,6 @@ void browserProfileClearDiscovery();
 void browserProfilePublishDiscovery();
 String browserProfileCommandTopic();
 String browserProfileRawEntityId();
+String browserProfileTelemetryJson();
 
 }  // namespace tuya_lora

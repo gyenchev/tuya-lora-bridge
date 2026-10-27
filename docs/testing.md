@@ -75,6 +75,15 @@ to MQTT and Home Assistant.
   snapshot does not contain the pack's required DPs.
 - [ ] Switching back to `auto` clears pack discovery and restores the built-in
   profile.
+- [ ] A selected pack whose required DP set is missing one non-critical DP still
+  reports `profile_match: true` (loose matching) and allows commands.
+- [ ] `/api/profile/telemetry` returns the pack's telemetry fields.
+- [ ] The status page renders Device telemetry from the selected pack and falls
+  back to raw DP rows when a pack has no telemetry metadata.
+- [ ] Status-page top tiles show only link/profile information, not charger-only
+  state/power/energy tiles.
+- [ ] Base OLED shows `Device: available/check/unknown` and `Profile: <name>`,
+  not `Charger`/`Power` rows.
 - [ ] Home Assistant entity IDs are unchanged after adding profile fields.
 
 ### Control

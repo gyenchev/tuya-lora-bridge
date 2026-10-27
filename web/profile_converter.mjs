@@ -2047,13 +2047,15 @@ export function buildPack(yaml, meta, info) {
       }
     }
   }
+  const telemetry = buildTelemetry(yaml);
   const pack = {
     format: 1,
     id: slugify(meta?.id || "profile", 23),
     name: text(meta?.name || displayName(yaml)).slice(0, 47),
     device_type: text(meta?.group || classifyGroup(yaml, meta?.file)).slice(0, 23),
     source: text(meta?.source || "").slice(0, 95),
-    detect: { require: deriveDetectFromRaw(yaml), priority: 5 },
+    detect: { require: deriveDetect(telemetry, yaml), priority: 5 },
+    telemetry,
     discovery: items,
     warnings,
   };
@@ -2097,6 +2099,211 @@ function compactPack(pack, maxBytes = 56000) {
       `compacted ${removed} lower-priority entities to fit the base pack limit; all DPs remain available in the raw-DP sensor`,
     ];
   }
+}
+
+function telemetryKind(entity, dp, dpIndex) {
+  if (dpIndex === 0 && (entity.type === "binary_sensor" || entity.type === "switch" || dp.rawtype === "boolean")) {
+    return "bool";
+  }
+  if (dp.rawtype === "boolean") return "bool";
+  if (entity.type === "select" || entity.class === "enum") return "enum";
+  const rules = mappingRules(dp);
+  if (rules.some((r) => Object.prototype.hasOwnProperty.call(r, "value"))) {
+    return "enum";
+  }
+  if (entity.type === "number" || ["integer", "float", "bitfield", "unixtime"].includes(dp.rawtype)) {
+    return "number";
+  }
+  return "text";
+}
+
+function telemetryLabel(entity, dp, dpIndex, count) {
+  const base = entityName(entity);
+  if (count > 1 && dpIndex > 0) {
+    return `${base} ${titleCase(dp.name || `DP ${dp.id}`)}`.trim();
+  }
+  return base;
+}
+
+function telemetryMap(dp) {
+  const map = {};
+  let size = 0;
+  for (const rule of mappingRules(dp)) {
+    if (!Object.prototype.hasOwnProperty.call(rule, "dps_val") || rule.dps_val === null) continue;
+    const key = String(rule.dps_val);
+    if (Object.prototype.hasOwnProperty.call(map, key)) continue;
+    const value = Object.prototype.hasOwnProperty.call(rule, "value") ? rule.value : rule.dps_val;
+    if (value === null || value === undefined) continue;
+    map[key] = String(value);
+    size += 1;
+    if (size >= 24) break;
+  }
+  return map;
+}
+
+function telemetryTrueValues(dp) {
+  const values = [];
+  for (const rule of mappingRules(dp)) {
+    if (!Object.prototype.hasOwnProperty.call(rule, "dps_val") || rule.dps_val === null) continue;
+    if (!Object.prototype.hasOwnProperty.call(rule, "value")) continue;
+    if (boolValue(rule.value) === true) values.push(String(rule.dps_val));
+  }
+  return values;
+}
+
+function semanticTelemetryKey(label, dp, entity, usedKeys) {
+  const lower = `${label} ${dp.name} ${dp.unit}`.toLowerCase();
+  const has = (key) => usedKeys.has(key);
+  if (!has("status") && (lower.includes("status") || entity.raw?.translation_key === "status")) {
+    return "status";
+  }
+  if (!has("fault") && (lower.includes("fault") || lower.includes("alarm") || entity.class === "problem")) {
+    return "fault";
+  }
+  if (!has("current_limit") && (entity.type === "number" || entity.type === "select") && lower.includes("current")) {
+    return "current_limit";
+  }
+  if (!has("power") && (lower.includes("power") || dp.unit === "kW" || dp.unit === "W")) {
+    return "power";
+  }
+  if (!has("temperature") && (lower.includes("temperature") || dp.unit === "°C" || dp.unit === "°F")) {
+    return "temperature";
+  }
+  if (dp.unit === "kWh") {
+    if (!has("session_energy") && (lower.includes("session") || lower.includes("last"))) return "session_energy";
+    if (!has("energy")) return "energy";
+  }
+  const phaseValue = (match) => {
+    if (!match) return 0;
+    if (match[1] === "a") return 1;
+    if (match[1] === "b") return 2;
+    if (match[1] === "c") return 3;
+    return Number(match[1]);
+  };
+  const phaseVoltage = phaseValue(lower.match(/voltage\s+([abc])\b/) || dp.name.toLowerCase().match(/voltage_?l?([123])\b/));
+  if (phaseVoltage >= 1 && phaseVoltage <= 3 && !has(`voltage_l${phaseVoltage}`)) {
+    return `voltage_l${phaseVoltage}`;
+  }
+  const phaseCurrent = phaseValue(lower.match(/current\s+([abc])\b/) || dp.name.toLowerCase().match(/current_?l?([123])\b/));
+  if (phaseCurrent >= 1 && phaseCurrent <= 3 && !has(`current_l${phaseCurrent}`)) {
+    return `current_l${phaseCurrent}`;
+  }
+  return null;
+}
+
+export function buildTelemetry(yaml) {
+  const fields = [];
+  const usedKeys = new Set();
+  const usedLabels = new Set();
+  const entities = asArray(yaml.entities);
+  for (let entityIndex = 0; entityIndex < entities.length; entityIndex += 1) {
+    const raw = entities[entityIndex];
+    if (!isObject(raw)) continue;
+    if (["button", "camera", "remote", "infrared"].includes(raw.entity)) continue;
+    const dps = asArray(raw.dps).map((dp, index) => parseDp(dp, raw, index));
+    const entity = { type: raw.entity, class: text(raw.class), raw, index: entityIndex, name: entityName(raw) };
+    const denseTypes = ["sensor", "binary_sensor", "climate", "water_heater", "humidifier", "cover", "light", "fan", "lock", "vacuum", "siren", "valve", "event", "time", "datetime", "lawn_mower", "media_player", "remote", "infrared"];
+    for (let dpIndex = 0; dpIndex < dps.length; dpIndex += 1) {
+      const dp = dps[dpIndex];
+      if (!dp.name || dp.format || dp.mask) continue;
+      if (dpIndex > 0 && !denseTypes.includes(raw.entity)) continue;
+      const kind = telemetryKind(entity, dp, dpIndex);
+      if (kind === "text" && ["time", "datetime"].includes(entity.type) === false &&
+          !dp.unit && !dp.class && !mappingRules(dp).length) {
+        // Plain unlabelled strings are usually commands or configuration;
+        // keep the table focused on measurable telemetry.
+        if (entity.type !== "sensor") continue;
+      }
+      let label = telemetryLabel(raw, dp, dpIndex, dps.length);
+      if (!label || label.toLowerCase() === "sensor") {
+        label = titleCase(dp.name || `DP ${dp.id}`);
+      }
+      if (usedLabels.has(label)) label = `${label} (DP ${dp.id})`;
+      usedLabels.add(label);
+      let key = semanticTelemetryKey(label, dp, entity, usedKeys) ||
+        slugify(label, 18) || `dp_${dp.id}`;
+      let suffix = 2;
+      while (usedKeys.has(key)) {
+        key = `${slugify(label, 16)}_${suffix}`;
+        suffix += 1;
+      }
+      usedKeys.add(key);
+      const field = {
+        key,
+        label,
+        dp: dp.id,
+        kind,
+      };
+      if (kind === "bool") {
+        const values = telemetryTrueValues(dp);
+        if (values.length) field.values = values;
+      } else if (kind === "enum") {
+        field.map = telemetryMap(dp);
+        if (!Object.keys(field.map).length) field.kind = "text";
+      } else if (kind === "number") {
+        const standalone = mappingRules(dp).find((r) => r.scale !== undefined &&
+          !Object.prototype.hasOwnProperty.call(r, "dps_val") &&
+          !Object.prototype.hasOwnProperty.call(r, "value"));
+        const scale = Number(standalone?.scale ?? dp.scale ?? 1);
+        field.scale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+        if (field.scale > 1) {
+          field.precision = Math.max(0, Math.ceil(Math.log10(field.scale)));
+        } else {
+          field.precision = dp.precision ?? 0;
+        }
+        if (dp.unit) field.unit = dp.unit;
+      }
+      fields.push(field);
+      if (fields.length >= 24) break;
+    }
+    if (fields.length >= 24) break;
+  }
+
+  const status = fields.find((f) => f.key === "status" && f.kind === "enum" && f.map);
+  if (status) {
+    const mapEntries = Object.entries(status.map);
+    const plugged = mapEntries
+      .filter(([, value]) => ["plugged_in", "charging", "charged", "waiting", "waiting_for_authorization"].includes(String(value).toLowerCase()))
+      .map(([raw]) => raw);
+    const charging = mapEntries
+      .filter(([, value]) => String(value).toLowerCase() === "charging")
+      .map(([raw]) => raw);
+    const fault = mapEntries
+      .filter(([, value]) => String(value).toLowerCase().includes("fault"))
+      .map(([raw]) => raw);
+    let insertAt = fields.indexOf(status) + 1;
+    const addDerived = (key, label, values) => {
+      if (!values.length || fields.some((f) => f.key === key)) return;
+      fields.splice(insertAt++, 0, {
+        key, label, dp: status.dp, kind: "bool", values,
+      });
+    };
+    addDerived("plugged", "Plugged", plugged);
+    addDerived("charging", "Charging", charging);
+    addDerived("fault", "Fault", fault);
+  }
+  if (JSON.stringify(fields).length > 10000) {
+    while (fields.length > 1 && JSON.stringify(fields).length > 10000) fields.pop();
+  }
+  return fields;
+}
+
+function deriveDetect(telemetry, yaml) {
+  const preferred = ["status", "voltage_l1", "current_l1", "power", "temperature", "fault", "plugged", "charging"];
+  const require = [];
+  for (const key of preferred) {
+    const field = telemetry.find((f) => f.key === key && f.dp);
+    if (!field || require.includes(Number(field.dp))) continue;
+    require.push(Number(field.dp));
+    if (require.length >= 4) return require;
+  }
+  for (const field of telemetry) {
+    if (!field.dp || require.includes(Number(field.dp))) continue;
+    require.push(Number(field.dp));
+    if (require.length >= 4) break;
+  }
+  if (!require.length) return deriveDetectFromRaw(yaml);
+  return require;
 }
 
 function deriveDetectFromRaw(yaml) {

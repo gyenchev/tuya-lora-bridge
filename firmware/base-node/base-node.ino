@@ -314,16 +314,20 @@ void drawScreen() {
     display.println(haveSeen ? "offline" : "waiting");
   }
 
-  display.print("Charger: ");
-  display.println(haveState ? statusName(lastStatus.status) : "unknown");
-
-  display.print("Power: ");
-  if (haveState) {
-    display.print(lastStatus.powerW / 1000.0f, 2);
-    display.println(" kW");
+  display.print("Device: ");
+  if (!haveState) {
+    display.println("unknown");
+  } else if (!profileMatched) {
+    display.println("check");
   } else {
-    display.println("--");
+    display.println("ready");
   }
+
+  display.print("Profile: ");
+  String profileLabel = browserProfileSelected() ? String(browserProfileName())
+                                                  : String(profileActiveId());
+  if (profileLabel.length() > 13) profileLabel = profileLabel.substring(0, 13);
+  display.println(profileLabel);
 
   display.print("LoRa: ");
   if (haveSeen) {

@@ -135,7 +135,7 @@ the nodes on trusted networks.
 | Home Assistant | Device name, timezone, discovery prefix and stable device identifier |
 | Timing | Offline timeout, snapshot/chunk timeouts, retry intervals, WiFi/MQTT reconnect intervals and display timings |
 | Control | Command enable, current/delay limits and legacy DP overrides for built-in profiles |
-| Profile | Auto-detect or manual profile selection, live detected/active/match status, a link to the browser profile catalog at `/profiles`, and the legacy custom profile JSON editor |
+| Profile | Auto-detect or manual profile selection, live detected/active/match status, a link to the browser profile catalog at `/profiles`, and the legacy custom profile JSON editor. The status page shows a profile-driven **Device telemetry** table for browser packs. |
 | System | Setup AP credentials, web UI port, SD firmware filename and SD update countdown |
 
 ### Remote node settings
@@ -231,6 +231,11 @@ mapping lives on the base node and can be changed without reflashing the remote.
    selected profile does not match the last snapshot.
 10. Marks the remote link offline after 10 minutes without a valid frame.
 11. Turns the OLED panel off 10 minutes after boot to reduce burn-in.
+
+The base status page shows link/profile tiles and a profile-driven **Device
+telemetry** table; packs without telemetry metadata fall back to raw DPs. The
+OLED shows device readiness (`available`/`check`/`unknown`) and the active
+profile name instead of charger-only status/power rows.
 
 The base node is normally a WiFi station. It creates an AP only for initial
 configuration or when the configured WiFi is unreachable.

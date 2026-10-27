@@ -19,7 +19,7 @@ namespace {
 constexpr const char *META_PATH = "/profile.meta.json";
 constexpr const char *META_TMP = "/profile.meta.tmp";
 constexpr const char *LEGACY_PATH = "/profile.json";
-constexpr size_t MAX_META_BYTES = 4096;
+constexpr size_t MAX_META_BYTES = 20000;
 constexpr size_t MAX_ITEM_BYTES = 24000;
 constexpr size_t MAX_TOTAL_BYTES = 250000;
 constexpr size_t MAX_ITEMS = 256;
@@ -291,6 +291,7 @@ bool streamActive = false;
 bool streamMetaParsed = false;
 bool streamFailed = false;
 String streamLine;
+String streamMetaRaw;
 String streamError;
 Meta streamMeta;
 uint32_t streamGeneration = 0;
@@ -301,6 +302,10 @@ bool processStreamLine(const String &line, bool &metaParsed, size_t &itemIndex,
                        Meta &meta, uint32_t &generation, String &error) {
   if (line.length() == 0) return true;
   if (!metaParsed) {
+    if (line.length() > MAX_META_BYTES) {
+      error = "profile metadata line is too long";
+      return false;
+    }
     JsonDocument doc;
     const DeserializationError err = deserializeJson(doc, line);
     if (err || !doc.is<JsonObject>()) {
@@ -313,6 +318,7 @@ bool processStreamLine(const String &line, bool &metaParsed, size_t &itemIndex,
     removeOldPack();
     incoming.generation = generation;
     meta = incoming;
+    streamMetaRaw = line;
     metaParsed = true;
     itemIndex = 0;
     Serial.printf("[pack] upload '%s' count=%u generation=%u\n", meta.id,
@@ -365,18 +371,27 @@ bool processStreamLine(const String &line, bool &metaParsed, size_t &itemIndex,
 
 bool commitStreamMeta(const Meta &meta, String &error) {
   JsonDocument out;
-  out["format"] = 1;
-  out["id"] = meta.id;
-  out["name"] = meta.name;
-  out["device_type"] = meta.type;
-  out["discovery_count"] = meta.count;
-  out["generation"] = meta.generation;
-  JsonObject detect = out["detect"].to<JsonObject>();
-  detect["priority"] = meta.priority;
-  JsonArray req = detect["require"].to<JsonArray>();
-  for (uint8_t i = 0; i < meta.requireCount; ++i) req.add(meta.require[i]);
-  JsonArray ex = detect["exclude"].to<JsonArray>();
-  for (uint8_t i = 0; i < meta.excludeCount; ++i) ex.add(meta.exclude[i]);
+  bool preserved = false;
+  if (streamMetaRaw.length() > 0 && !deserializeJson(out, streamMetaRaw) &&
+      out.is<JsonObject>()) {
+    out["generation"] = meta.generation;
+    out["discovery_count"] = meta.count;
+    preserved = true;
+  }
+  if (!preserved) {
+    out["format"] = 1;
+    out["id"] = meta.id;
+    out["name"] = meta.name;
+    out["device_type"] = meta.type;
+    out["discovery_count"] = meta.count;
+    out["generation"] = meta.generation;
+    JsonObject detect = out["detect"].to<JsonObject>();
+    detect["priority"] = meta.priority;
+    JsonArray req = detect["require"].to<JsonArray>();
+    for (uint8_t i = 0; i < meta.requireCount; ++i) req.add(meta.require[i]);
+    JsonArray ex = detect["exclude"].to<JsonArray>();
+    for (uint8_t i = 0; i < meta.excludeCount; ++i) ex.add(meta.exclude[i]);
+  }
 
   String json;
   serializeJson(out, json);
@@ -459,7 +474,17 @@ bool browserProfileSelected() {
 }
 
 bool browserProfileMatches(JsonObject dps) {
-  return loaded && packMatchesDps(dps);
+  if (!loaded) return false;
+  if (packRequireCount == 0) return true;
+  size_t present = 0;
+  for (uint8_t i = 0; i < packRequireCount; ++i) {
+    if (keyPresent(dps, packRequire[i])) present++;
+  }
+  uint8_t needed = packRequireCount;
+  if (packRequireCount > 4) needed = packRequireCount - 2;
+  else if (packRequireCount > 2) needed = packRequireCount - 1;
+  if (needed < 1) needed = 1;
+  return present >= needed;
 }
 
 void browserProfileStreamBegin() {
@@ -467,6 +492,7 @@ void browserProfileStreamBegin() {
   streamMetaParsed = false;
   streamFailed = false;
   streamLine = "";
+  streamMetaRaw = "";
   streamError = "";
   streamItemIndex = 0;
   streamTotal = 0;
@@ -553,6 +579,18 @@ void browserProfileStreamAbort() {
   streamActive = false;
   streamFailed = true;
   streamError = "profile upload aborted";
+}
+
+String browserProfileTelemetryJson() {
+  String json;
+  if (!readMetaFile(json)) return "[]";
+  JsonDocument doc;
+  if (deserializeJson(doc, json) || !doc.is<JsonObject>()) return "[]";
+  JsonArray telemetry = doc["telemetry"].as<JsonArray>();
+  if (telemetry.isNull()) return "[]";
+  String out;
+  serializeJson(telemetry, out);
+  return out.length() ? out : "[]";
 }
 
 void browserProfileClearDiscovery() {

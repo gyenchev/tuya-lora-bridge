@@ -74,6 +74,11 @@ also publishes a hidden **Raw DPs** sensor whose `dps` attribute contains the
 complete raw DP snapshot. Command templates use that sensor to perform
 conditional mappings, bit masks and packed-value read-modify-write.
 
+The pack metadata also contains a small `telemetry` array: labels, DP IDs,
+enum maps and scaling for the status page. `/api/profile/telemetry` serves it and
+the status page renders the values from the current raw snapshot. Packs without
+telemetry metadata fall back to a table of raw DPs.
+
 ### Native platforms
 
 The converter generates native MQTT discovery for:

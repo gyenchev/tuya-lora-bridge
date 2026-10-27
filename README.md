@@ -64,6 +64,9 @@ The Tuya device stays on its own local protections and schedules.
   emitters are decomposed into standard MQTT controls and sensors.
 - A raw-DP sensor exposes every DP as an attribute, so no DP is hidden even
   when a platform cannot express it natively.
+- Profile-driven **Device telemetry** on the status page, with a raw-DP fallback;
+  the top status tiles are limited to link/profile data and the base OLED shows
+  device availability and the active profile instead of charger-only rows.
 - Streaming profile-pack storage (metadata + one small file per discovery
   entity) in a 384 KB LittleFS partition; no single-JSON pack memory ceiling.
 - Offline charger catalog (15 pre-converted packs) plus the three built-in

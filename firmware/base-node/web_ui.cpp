@@ -316,50 +316,54 @@ const char STATUS_HTML[] PROGMEM = R"HTML(<!doctype html>
 
   <div class="cards">
     <div class="card"><span class="label">Remote link</span><strong id="online">--</strong></div>
-    <div class="card"><span class="label">Charger state</span><strong id="state">--</strong></div>
-    <div class="card"><span class="label">Power</span><strong id="power">--</strong></div>
-    <div class="card"><span class="label">Session energy</span><strong id="session-energy">--</strong></div>
-    <div class="card"><span class="label">Temperature</span><strong id="temperature">--</strong></div>
-    <div class="card"><span class="label">Current limit</span><strong id="current-limit">--</strong></div>
     <div class="card"><span class="label">Profile</span><strong id="profile">--</strong></div>
     <div class="card"><span class="label">Last seen</span><strong id="age">--</strong></div>
     <div class="card"><span class="label">LoRa</span><strong id="lora">--</strong></div>
   </div>
 
-  <h2>Charger telemetry</h2>
-  <p class="muted">These fixed fields are the legacy charger state model. Generic profile entities are published on per-entity MQTT topics; see <code>docs/home-assistant.md</code>.</p>
+  <h2>Profile</h2>
   <table class="telemetry">
-    <tr><th>Status</th><td id="t-status">--</td></tr>
     <tr><th>Active profile</th><td id="t-profile">--</td></tr>
     <tr><th>Selected profile</th><td id="t-profile-selected">--</td></tr>
     <tr><th>Detected profile</th><td id="t-profile-detected">--</td></tr>
     <tr><th>Profile match</th><td id="t-profile-match">--</td></tr>
     <tr><th>Profile entities</th><td id="t-profile-entities">--</td></tr>
     <tr><th>Profile note</th><td id="t-profile-note">--</td></tr>
-    <tr><th>Fault flags</th><td id="t-fault">--</td></tr>
-    <tr><th>Plugged</th><td id="t-plugged">--</td></tr>
-    <tr><th>Charging</th><td id="t-charging">--</td></tr>
-    <tr><th>Charge session</th><td id="t-session">--</td></tr>
-    <tr><th>Charge control (DP 124)</th><td id="t-control">--</td></tr>
-    <tr><th>Waiting for RFID</th><td id="t-rfid-wait">--</td></tr>
-    <tr><th>RFID active</th><td id="t-rfid">--</td></tr>
-    <tr><th>Schedule active</th><td id="t-schedule">--</td></tr>
-    <tr><th>Current limit</th><td id="t-current-limit">--</td></tr>
-    <tr><th>Voltage L1</th><td id="t-v1">--</td></tr>
-    <tr><th>Voltage L2</th><td id="t-v2">--</td></tr>
-    <tr><th>Voltage L3</th><td id="t-v3">--</td></tr>
-    <tr><th>Current L1</th><td id="t-a1">--</td></tr>
-    <tr><th>Current L2</th><td id="t-a2">--</td></tr>
-    <tr><th>Current L3</th><td id="t-a3">--</td></tr>
-    <tr><th>Power</th><td id="t-power">--</td></tr>
-    <tr><th>Total energy</th><td id="t-energy">--</td></tr>
-    <tr><th>Session energy</th><td id="t-session-energy">--</td></tr>
-    <tr><th>Temperature</th><td id="t-temperature">--</td></tr>
-    <tr><th>Charge time</th><td id="t-charge-time">--</td></tr>
-    <tr><th>LoRa RSSI</th><td id="t-rssi">--</td></tr>
-    <tr><th>LoRa SNR</th><td id="t-snr">--</td></tr>
-    <tr><th>Last seen</th><td id="t-age">--</td></tr>
   </table>
+
+  <h2>Device telemetry</h2>
+  <p class="muted" id="telemetry-note">Values from the selected profile.</p>
+  <div id="telemetry-dynamic" hidden>
+    <table class="telemetry" id="telemetry-table"></table>
+  </div>
+  <div id="telemetry-fixed">
+    <table class="telemetry">
+      <tr><th>Status</th><td id="t-status">--</td></tr>
+      <tr><th>Fault flags</th><td id="t-fault">--</td></tr>
+      <tr><th>Plugged</th><td id="t-plugged">--</td></tr>
+      <tr><th>Charging</th><td id="t-charging">--</td></tr>
+      <tr><th>Charge session</th><td id="t-session">--</td></tr>
+      <tr><th>Charge control (DP 124)</th><td id="t-control">--</td></tr>
+      <tr><th>Waiting for RFID</th><td id="t-rfid-wait">--</td></tr>
+      <tr><th>RFID active</th><td id="t-rfid">--</td></tr>
+      <tr><th>Schedule active</th><td id="t-schedule">--</td></tr>
+      <tr><th>Current limit</th><td id="t-current-limit">--</td></tr>
+      <tr><th>Voltage L1</th><td id="t-v1">--</td></tr>
+      <tr><th>Voltage L2</th><td id="t-v2">--</td></tr>
+      <tr><th>Voltage L3</th><td id="t-v3">--</td></tr>
+      <tr><th>Current L1</th><td id="t-a1">--</td></tr>
+      <tr><th>Current L2</th><td id="t-a2">--</td></tr>
+      <tr><th>Current L3</th><td id="t-a3">--</td></tr>
+      <tr><th>Power</th><td id="t-power">--</td></tr>
+      <tr><th>Total energy</th><td id="t-energy">--</td></tr>
+      <tr><th>Session energy</th><td id="t-session-energy">--</td></tr>
+      <tr><th>Temperature</th><td id="t-temperature">--</td></tr>
+      <tr><th>Charge time</th><td id="t-charge-time">--</td></tr>
+      <tr><th>LoRa RSSI</th><td id="t-rssi">--</td></tr>
+      <tr><th>LoRa SNR</th><td id="t-snr">--</td></tr>
+      <tr><th>Last seen</th><td id="t-age">--</td></tr>
+    </table>
+  </div>
 
   <h2>Raw DP JSON</h2>
   <details><summary>Show raw JSON</summary><pre id="dp-json">--</pre></details>
@@ -386,6 +390,93 @@ function ago(seconds) {
   if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
   return Math.floor(seconds / 3600) + 'h ago';
 }
+let telemetryFields = [];
+let telemetryProfile = null;
+let telemetryBusy = false;
+
+function parseDps(d) {
+  try {
+    const raw = JSON.parse(d.dp_json || '{}');
+    return raw && raw.dps ? raw.dps : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function telemetryText(field, dps) {
+  const raw = dps[field.dp];
+  if (raw === undefined || raw === null) return '--';
+  if (field.kind === 'bool') {
+    let value;
+    if (Array.isArray(field.values) && field.values.length) {
+      value = field.values.map(String).includes(String(raw));
+    } else {
+      value = Boolean(raw);
+    }
+    return value ? 'Yes' : 'No';
+  }
+  if (field.kind === 'enum') {
+    const key = String(raw);
+    if (field.map && Object.prototype.hasOwnProperty.call(field.map, key)) {
+      return String(field.map[key]);
+    }
+    return String(raw);
+  }
+  if (field.kind === 'number') {
+    const number = Number(raw);
+    if (!Number.isFinite(number)) return String(raw);
+    const scale = Number(field.scale || 1);
+    const value = scale !== 1 ? number / scale : number;
+    const precision = Number.isInteger(field.precision) ? field.precision : (scale > 1 ? 1 : 0);
+    return value.toFixed(precision) + (field.unit ? ' ' + field.unit : '');
+  }
+  if (typeof raw === 'object') return JSON.stringify(raw);
+  return String(raw);
+}
+
+async function loadTelemetry() {
+  try {
+    const response = await fetch('/api/profile/telemetry', {cache: 'no-store'});
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function renderTelemetry(d) {
+  const table = $('telemetry-table');
+  if (!table) return;
+  table.replaceChildren();
+  const dps = parseDps(d);
+  let fields = telemetryFields;
+  if (!fields.length) {
+    fields = Object.keys(dps)
+      .sort((a, b) => Number(a) - Number(b))
+      .map((id) => ({ key: 'dp_' + id, label: 'DP ' + id, dp: id, kind: 'text' }));
+  }
+  if (!fields.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 2;
+    cell.textContent = d.have_state ? 'No telemetry definitions for this pack.' : 'Waiting for DP snapshot.';
+    row.appendChild(cell);
+    table.appendChild(row);
+    return;
+  }
+  for (const field of fields) {
+    const row = document.createElement('tr');
+    const label = document.createElement('th');
+    label.textContent = field.label || ('DP ' + field.dp);
+    const value = document.createElement('td');
+    value.textContent = telemetryText(field, dps);
+    row.appendChild(label);
+    row.appendChild(value);
+    table.appendChild(row);
+  }
+}
+
 async function refresh() {
   try {
     const response = await fetch('/api/status', {cache: 'no-store'});
@@ -395,11 +486,6 @@ async function refresh() {
     set('base-link', d.wifi_connected ? 'connected to ' + d.base_ip + ' (' + d.wifi_rssi + ' dBm)' : 'WiFi not connected');
     set('mqtt-link', d.mqtt_connected ? 'connected' : 'not connected');
     set('online', d.online ? 'online' : (d.have_seen ? 'offline' : 'waiting'));
-    set('state', d.have_state ? d.status : 'unknown');
-    set('power', d.have_state ? fmt(d.power_kw, 2, ' kW') : '--');
-    set('session-energy', d.have_state ? fmt(d.session_energy_kwh, 2, ' kWh') : '--');
-    set('temperature', d.have_state ? fmt(d.temperature_c, 1, ' °C') : '--');
-    set('current-limit', d.have_state ? d.current_limit + ' A' : '--');
     set('profile', d.profile || 'unknown');
     set('age', d.have_seen ? ago(d.age_s) : 'never');
     set('lora', d.have_seen ? d.rssi + ' dBm / ' + fmt(d.snr, 1) + ' dB' : '--');
@@ -434,6 +520,27 @@ async function refresh() {
     set('t-snr', d.have_seen ? fmt(d.snr, 1, ' dB') : '--');
     set('t-age', d.have_seen ? ago(d.age_s) : 'never');
     set('dp-json', d.dp_json || '(none)');
+    const isPack = Boolean(d.profile_pack);
+    const dynamic = $('telemetry-dynamic');
+    const fixed = $('telemetry-fixed');
+    if (dynamic) dynamic.hidden = !isPack;
+    if (fixed) fixed.hidden = isPack;
+    const note = $('telemetry-note');
+    if (note) note.textContent = isPack
+      ? 'Values from the selected browser pack; all raw DPs are available below.'
+      : 'Legacy charger telemetry for the built-in profiles.';
+    if (isPack) {
+      if (telemetryProfile !== d.profile_selected && !telemetryBusy) {
+        telemetryBusy = true;
+        try {
+          telemetryFields = await loadTelemetry();
+          telemetryProfile = d.profile_selected;
+        } finally {
+          telemetryBusy = false;
+        }
+      }
+      renderTelemetry(d);
+    }
   } catch (error) {
     set('updated', 'connection lost');
   }
@@ -1291,6 +1398,11 @@ void handleApiStatus() {
   json += (profileMatched ? "true" : "false");
   json += ",\"profile_entities\":";
   json += String(profileEntityCount());
+  json += ",\"profile_pack\":";
+  json += (browserProfileSelected() ? "true" : "false");
+  json += ",\"profile_device_type\":\"";
+  json += jsonEscape(browserProfileDeviceType());
+  json += "\"";
   json += ",\"profile_error\":\"";
   json += jsonEscape(profileError);
   json += "\",\"dp_json\":\"";
@@ -1533,6 +1645,12 @@ void handleProfileOffline() {
   server->send_P(200, "application/json", OFFLINE_CHARGERS_JSON);
 }
 
+void handleProfileTelemetry() {
+  addProfileCors();
+  server->sendHeader("Cache-Control", "no-store");
+  server->send(200, "application/json", browserProfileTelemetryJson());
+}
+
 void handleProfileInfo() {
   JsonDocument doc;
   doc["ha_name"] = settings.haName;
@@ -1669,6 +1787,7 @@ void webUiBegin() {
   server->on("/profile_mapping.mjs", HTTP_GET, handleProfileMapping);
   server->on("/api/profile/info", HTTP_GET, handleProfileInfo);
   server->on("/api/profile/offline", HTTP_GET, handleProfileOffline);
+  server->on("/api/profile/telemetry", HTTP_GET, handleProfileTelemetry);
   server->on("/api/profile/save", HTTP_POST, handleProfileSave, handleProfileRaw);
   server->on("/api/profile/save", HTTP_OPTIONS, handleProfileOptions);
   server->on("/api/status", HTTP_GET, handleApiStatus);
