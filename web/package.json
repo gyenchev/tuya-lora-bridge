@@ -1,0 +1,8 @@
+{
+  "name": "tuya-lora-profile-builder",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}

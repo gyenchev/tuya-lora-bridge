@@ -9,6 +9,7 @@
 #include <strings.h>
 
 #include "config.h"
+#include "browser_profile.h"
 
 namespace tuya_lora {
 
@@ -1481,7 +1482,8 @@ bool parseCustomProfile(JsonObject object, size_t index, ProfileDef &profile,
     }
   }
   if (strcmp(id, "auto") == 0 || strcmp(id, "fallback") == 0 ||
-      strcmp(id, "unknown") == 0 || findBuiltin(id)) {
+      strcmp(id, "unknown") == 0 || findBuiltin(id) ||
+      (browserProfileLoaded() && strcmp(id, browserProfileId()) == 0)) {
     error = path + ".id is reserved";
     return false;
   }
@@ -1783,6 +1785,9 @@ bool profilesSelectionValid(const char *selection, const char *customJsonText,
   }
   if (strcmp(selection, "auto") == 0) return true;
   if (findBuiltin(selection)) return true;
+  if (browserProfileLoaded() && strcmp(selection, browserProfileId()) == 0) {
+    return true;
+  }
 
   if (!customJsonText || isBlank(customJsonText)) {
     error = String("profile '") + selection +
@@ -1883,6 +1888,24 @@ String profileOptions(const char *selected) {
     found = true;
   }
   out += ">Auto-detect</option>";
+
+  if (browserProfileLoaded()) {
+    out += "<option value=\"";
+    out += htmlEscape(browserProfileId());
+    out += "\"";
+    if (selected && strcmp(selected, browserProfileId()) == 0) {
+      out += " selected";
+      found = true;
+    }
+    if (browserProfileDeviceType()[0]) {
+      out += " title=\"";
+      out += htmlEscape(browserProfileDeviceType());
+      out += "\"";
+    }
+    out += ">";
+    out += htmlEscape(browserProfileName());
+    out += " (browser pack)</option>";
+  }
 
   const size_t count = profilesCount();
   for (size_t i = 0; i < count; ++i) {

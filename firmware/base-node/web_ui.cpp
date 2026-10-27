@@ -8,10 +8,12 @@
 #include <string.h>
 
 #include "boot_guard.h"
+#include "browser_profile.h"
 #include "config.h"
 #include "config_store.h"
 #include "lora_protocol.h"
 #include "profiles.h"
+#include "web_assets.h"
 
 // Defined in base-node.ino (global namespace).
 extern PubSubClient mqtt;
@@ -186,16 +188,17 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
         <div><strong>Active:</strong> {{PROFILE_ACTIVE}}</div>
         <div><strong>Detected:</strong> {{PROFILE_DETECTED}}</div>
         <div><strong>Snapshot match:</strong> {{PROFILE_MATCH}}</div>
-        <div><strong>Generic entities:</strong> {{PROFILE_ENTITIES}}</div>
+        <div><strong>Profile entities:</strong> {{PROFILE_ENTITIES}}</div>
         <div><strong>Note:</strong> {{PROFILE_NOTE}}</div>
       </div>
       <label for="profile_id">DP profile</label>
       <select id="profile_id" name="profile_id">{{PROFILE_OPTIONS}}</select>
-      <p class="hint">Auto-detect chooses a built-in or custom profile from the DP keys in the last snapshot. Selecting a profile forces its state map. Save and reboot to apply the selection.</p>
-      <p class="hint">The Control tab DP IDs override outgoing command DPs for built-in profiles. Custom profiles define both state and command DPs in the JSON below.</p>
+      <p class="hint"><a href="/profiles">Open profile catalog</a> to browse the online tuya-local catalog or the offline charger packs, convert a descriptor in the browser and save only the selected pack to the base.</p>
+      <p class="hint">Auto-detect chooses a built-in or custom profile from the DP keys in the last snapshot. Selecting a profile, including a browser pack, forces its state map. Save and reboot to apply the selection.</p>
+      <p class="hint">The Control tab DP IDs override outgoing command DPs for built-in profiles. Browser packs and custom profiles define their own command mappings.</p>
       <label for="profiles_json">Custom profiles (JSON) <span class="def">optional, max 8192 bytes</span></label>
       <textarea id="profiles_json" name="profiles_json" maxlength="8192" spellcheck="false" autocapitalize="off" autocomplete="off">{{PROFILES_JSON}}</textarea>
-      <p class="hint">Profiles can use the generic <code>entities</code> schema (tuya-local style) to expose sensors, binary sensors, switches, numbers, selects, buttons and text entities in Home Assistant. The legacy <code>state</code>/<code>control</code> map remains available for compact EV-style maps and the built-in profiles. Up to four profiles. Save the JSON and reboot once to make new profile IDs available in the dropdown, then select one and save again. Leave the box empty to remove all custom profiles. Invalid JSON is rejected and the editor keeps your text. See <code>docs/tuya-device.md</code> for the schema and examples.</p>
+      <p class="hint">The profile catalog is the recommended path for new devices. This editor remains available for compact manual profiles using the generic <code>entities</code> schema or the legacy <code>state</code>/<code>control</code> map. Up to four custom profiles. Save the JSON and reboot once to make new profile IDs available in the dropdown, then select one and save again. Leave the box empty to remove all custom profiles. Invalid JSON is rejected and the editor keeps your text. See <code>docs/tuya-device.md</code> for the schema and examples.</p>
     </section>
 
     <section class="tab-panel" id="tab-system" data-tab-panel="system" role="tabpanel">
@@ -331,7 +334,7 @@ const char STATUS_HTML[] PROGMEM = R"HTML(<!doctype html>
     <tr><th>Selected profile</th><td id="t-profile-selected">--</td></tr>
     <tr><th>Detected profile</th><td id="t-profile-detected">--</td></tr>
     <tr><th>Profile match</th><td id="t-profile-match">--</td></tr>
-    <tr><th>Generic entities</th><td id="t-profile-entities">--</td></tr>
+    <tr><th>Profile entities</th><td id="t-profile-entities">--</td></tr>
     <tr><th>Profile note</th><td id="t-profile-note">--</td></tr>
     <tr><th>Fault flags</th><td id="t-fault">--</td></tr>
     <tr><th>Plugged</th><td id="t-plugged">--</td></tr>
@@ -1503,6 +1506,82 @@ void handleScan() {
   server->send(200, "application/json", json);
 }
 
+void addProfileCors() {
+  server->sendHeader("Access-Control-Allow-Origin", "*");
+  server->sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  server->sendHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+void handleProfileBuilder() {
+  server->sendHeader("Cache-Control", "no-store");
+  server->send_P(200, "text/html", PROFILE_BUILDER_HTML);
+}
+
+void handleProfileConverter() {
+  server->sendHeader("Cache-Control", "no-store");
+  server->send_P(200, "application/javascript", PROFILE_CONVERTER_JS);
+}
+
+void handleProfileOffline() {
+  addProfileCors();
+  server->sendHeader("Cache-Control", "no-store");
+  server->send_P(200, "application/json", OFFLINE_CHARGERS_JSON);
+}
+
+void handleProfileInfo() {
+  JsonDocument doc;
+  doc["ha_name"] = settings.haName;
+  doc["ha_device_id"] = settings.haDeviceId;
+  doc["state_topic"] = settings.mqttTopicDps;
+  doc["command_topic"] = browserProfileCommandTopic();
+  doc["availability_topic"] = settings.mqttTopicAvailability;
+  doc["selection"] = settings.profileId;
+  doc["pack_loaded"] = browserProfileLoaded();
+  if (browserProfileLoaded()) {
+    JsonObject pack = doc["pack"].to<JsonObject>();
+    pack["id"] = browserProfileId();
+    pack["name"] = browserProfileName();
+    pack["device_type"] = browserProfileDeviceType();
+    pack["discovery"] = browserProfileDiscoveryCount();
+  }
+  String json;
+  json.reserve(512);
+  serializeJson(doc, json);
+  addProfileCors();
+  server->sendHeader("Cache-Control", "no-store");
+  server->send(200, "application/json", json);
+}
+
+void handleProfileSave() {
+  addProfileCors();
+  if (!server->hasArg("pack")) {
+    server->send(400, "application/json",
+                 "{\"ok\":false,\"error\":\"missing pack\"}");
+    return;
+  }
+  const String pack = server->arg("pack");
+  String error;
+  if (!browserProfileValidateAndSave(pack, error)) {
+    JsonDocument doc;
+    doc["ok"] = false;
+    doc["error"] = error;
+    String json;
+    serializeJson(doc, json);
+    server->send(400, "application/json", json);
+    return;
+  }
+
+  bootGuardClear();
+  rebootAtMs = millis() + 1500;
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["id"] = browserProfileId();
+  doc["name"] = browserProfileName();
+  String json;
+  serializeJson(doc, json);
+  server->send(200, "application/json", json);
+}
+
 void handleNotFound() {
   server->sendHeader("Location", "/");
   server->send(302, "text/plain", "");
@@ -1543,6 +1622,11 @@ void webUiBegin() {
   server = new WebServer(settings.webUiPort);
   server->on("/", HTTP_GET, handleStatus);
   server->on("/settings", HTTP_GET, handleSettings);
+  server->on("/profiles", HTTP_GET, handleProfileBuilder);
+  server->on("/profile_converter.mjs", HTTP_GET, handleProfileConverter);
+  server->on("/api/profile/info", HTTP_GET, handleProfileInfo);
+  server->on("/api/profile/offline", HTTP_GET, handleProfileOffline);
+  server->on("/api/profile/save", HTTP_POST, handleProfileSave);
   server->on("/api/status", HTTP_GET, handleApiStatus);
   server->on("/save", HTTP_POST, handleSave);
   server->on("/factory", HTTP_POST, handleFactory);

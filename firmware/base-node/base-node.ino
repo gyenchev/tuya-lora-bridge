@@ -26,6 +26,7 @@
 #include <time.h>
 
 #include "boot_guard.h"
+#include "browser_profile.h"
 #include "config.h"
 #include "config_store.h"
 #include "entities.h"
@@ -94,13 +95,15 @@ const ProfileDef *detectedProfile = nullptr;
 bool profileMatched = false;
 char profileError[96] = "waiting for DP snapshot";
 char lastDiscoveryProfile[24] = {0};
-bool lastDiscoveryGeneric = false;
+int lastDiscoveryMode = -1;
 bool discoveryInitialized = false;
 bool legacyDiscoveryCleared = false;
 bool genericDiscoveryCleared = false;
+bool packDiscoveryCleared = false;
 uint8_t lastDelayHours = 0;
 
 const char *profileActiveId() {
+  if (browserProfileSelected()) return browserProfileId();
   return activeProfile ? activeProfile->id : "unknown";
 }
 
@@ -109,6 +112,9 @@ const char *profileDetectedId() {
 }
 
 uint8_t profileEntityCount() {
+  if (browserProfileSelected()) {
+    return static_cast<uint8_t>(browserProfileDiscoveryCount());
+  }
   const ProfileDef *profile = activeProfile;
   if (!profile && strcmp(settings.profileId, "auto") != 0) {
     profile = profileFind(settings.profileId);
@@ -868,10 +874,26 @@ void applyDpJson() {
   }
 
   detectedProfile = profileAutoDetect(dps);
-  const bool autoMode = strcmp(settings.profileId, "auto") == 0;
-  const ProfileDef *selected = autoMode ? nullptr : profileFind(settings.profileId);
+  const bool packMode = browserProfileSelected();
+  const bool autoMode = !packMode && strcmp(settings.profileId, "auto") == 0;
+  const ProfileDef *selected =
+      (packMode || autoMode) ? nullptr : profileFind(settings.profileId);
 
-  if (autoMode) {
+  StatusData st;
+  uint8_t delayHours = 0;
+
+  if (packMode) {
+    activeProfile = nullptr;
+    profileMatched = browserProfileMatches(dps);
+    if (profileMatched) {
+      profileError[0] = '\0';
+    } else {
+      snprintf(profileError, sizeof(profileError),
+               "selected browser pack '%s' does not match this DP snapshot",
+               browserProfileId());
+    }
+    applyProfileState(dps, *profilesFallback(), st, delayHours);
+  } else if (autoMode) {
     activeProfile = detectedProfile ? detectedProfile : profilesFallback();
     profileMatched = activeProfile != profilesFallback();
     if (profileMatched) {
@@ -880,6 +902,7 @@ void applyDpJson() {
       snprintf(profileError, sizeof(profileError),
                "no built-in or custom profile matched this DP snapshot");
     }
+    applyProfileState(dps, *activeProfile, st, delayHours);
   } else if (selected) {
     activeProfile = selected;
     profileMatched = profileMatches(*selected, dps);
@@ -890,30 +913,33 @@ void applyDpJson() {
                "selected profile '%s' does not match this DP snapshot",
                selected->id);
     }
+    applyProfileState(dps, *activeProfile, st, delayHours);
   } else {
     activeProfile = profilesFallback();
     profileMatched = false;
     snprintf(profileError, sizeof(profileError),
              "selected profile '%s' is not loaded", settings.profileId);
+    applyProfileState(dps, *activeProfile, st, delayHours);
   }
-  if (!activeProfile) activeProfile = profilesFallback();
+  if (!packMode && !activeProfile) activeProfile = profilesFallback();
 
-  StatusData st;
-  uint8_t delayHours = 0;
-  applyProfileState(dps, *activeProfile, st, delayHours);
   lastDelayHours = delayHours;
-
   lastStatus = st;
   haveState = true;
 
   if (mqtt.connected()) {
+    const int mode =
+        packMode ? 2
+                 : (activeProfile && activeProfile->hasGenericEntities() ? 1 : 0);
+    const char *activeId =
+        packMode ? browserProfileId()
+                 : (activeProfile ? activeProfile->id : "fallback");
     const bool discoveryChanged =
-        !discoveryInitialized || !activeProfile ||
-        strcmp(lastDiscoveryProfile, activeProfile->id) != 0 ||
-        lastDiscoveryGeneric != activeProfile->hasGenericEntities();
+        !discoveryInitialized || strcmp(lastDiscoveryProfile, activeId) != 0 ||
+        lastDiscoveryMode != mode;
     if (discoveryChanged) {
       publishDiscovery();
-    } else if (activeProfile->hasGenericEntities()) {
+    } else if (mode == 1 && activeProfile) {
       genericPublishState(*activeProfile, dps);
     }
   }
@@ -1123,8 +1149,14 @@ bool sendDpSet(const String &dpsJson, const char *name) {
     publishCommandResultNamed(name, "busy", "DP snapshot in progress");
     return false;
   }
-  if (!activeProfile || !profileMatched ||
-      activeProfile == profilesFallback()) {
+  if (browserProfileSelected()) {
+    if (!profileMatched) {
+      publishCommandResultNamed(name, "unsupported_profile",
+                                "browser pack does not match last snapshot");
+      return false;
+    }
+  } else if (!activeProfile || !profileMatched ||
+             activeProfile == profilesFallback()) {
     publishCommandResultNamed(name, "unsupported_profile", profileActiveId());
     return false;
   }
@@ -1332,6 +1364,8 @@ void maintainMqtt() {
     mqtt.subscribe(settings.mqttTopicCmdQuery);
     const String genericSubscription = genericCommandWildcard();
     mqtt.subscribe(genericSubscription.c_str());
+    const String packSubscription = browserProfileCommandTopic();
+    mqtt.subscribe(packSubscription.c_str());
   } else {
     Serial.printf("[mqtt] failed rc=%d\n", mqtt.state());
   }
@@ -1683,21 +1717,38 @@ void clearLegacyDiscovery() {
 }
 
 void publishDiscovery() {
+  const bool packMode = browserProfileSelected();
   const ProfileDef *profile = activeProfile;
-  if (!profile && strcmp(settings.profileId, "auto") != 0) {
+  if (!packMode && !profile && strcmp(settings.profileId, "auto") != 0) {
     profile = profileFind(settings.profileId);
   }
-  const bool generic = profile && profile->hasGenericEntities();
+  const bool generic = !packMode && profile && profile->hasGenericEntities();
 
-  if (generic) {
+  if (packMode) {
     if (!legacyDiscoveryCleared) {
       clearLegacyDiscovery();
       legacyDiscoveryCleared = true;
     }
+    if (!genericDiscoveryCleared) {
+      genericClearDiscovery();
+      genericClearState();
+      genericDiscoveryCleared = true;
+    }
+    browserProfileClearDiscovery();
+    browserProfilePublishDiscovery();
+    packDiscoveryCleared = false;
+  } else if (generic) {
+    if (!legacyDiscoveryCleared) {
+      clearLegacyDiscovery();
+      legacyDiscoveryCleared = true;
+    }
+    if (!packDiscoveryCleared) {
+      browserProfileClearDiscovery();
+      packDiscoveryCleared = true;
+    }
     const bool profileChanged =
-        !discoveryInitialized ||
-        strcmp(lastDiscoveryProfile, profile->id) != 0 ||
-        !lastDiscoveryGeneric;
+        !discoveryInitialized || lastDiscoveryMode != 1 ||
+        strcmp(lastDiscoveryProfile, profile->id) != 0;
     if (profileChanged) genericClearState();
     genericPublishDiscovery(*profile);
     genericDiscoveryCleared = false;
@@ -1705,6 +1756,10 @@ void publishDiscovery() {
       genericPublishStateFromJson(*profile, dpJson);
     }
   } else {
+    if (!packDiscoveryCleared) {
+      browserProfileClearDiscovery();
+      packDiscoveryCleared = true;
+    }
     if (!genericDiscoveryCleared) {
       genericClearDiscovery();
       genericClearState();
@@ -1716,14 +1771,11 @@ void publishDiscovery() {
 
   publishLinkDiscovery();
 
-  if (profile) {
-    strncpy(lastDiscoveryProfile, profile->id,
-            sizeof(lastDiscoveryProfile) - 1);
-    lastDiscoveryProfile[sizeof(lastDiscoveryProfile) - 1] = '\0';
-  } else {
-    lastDiscoveryProfile[0] = '\0';
-  }
-  lastDiscoveryGeneric = generic;
+  const char *activeId = packMode ? browserProfileId()
+                                  : (profile ? profile->id : "");
+  strncpy(lastDiscoveryProfile, activeId, sizeof(lastDiscoveryProfile) - 1);
+  lastDiscoveryProfile[sizeof(lastDiscoveryProfile) - 1] = '\0';
+  lastDiscoveryMode = packMode ? 2 : (generic ? 1 : 0);
   discoveryInitialized = true;
 }
 
@@ -1737,6 +1789,33 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
 
   if (t == settings.mqttTopicCmdQuery) {
     nextDpQueryMs = millis();
+    return;
+  }
+  if (t == browserProfileCommandTopic()) {
+    if (!browserProfileSelected()) {
+      rejectCommand("pack", "no browser profile selected");
+      return;
+    }
+    if (!profileMatched) {
+      rejectCommand("pack", "browser profile does not match the last snapshot");
+      return;
+    }
+    if (p.length() == 0) {
+      rejectCommand("pack", "empty DP command");
+      return;
+    }
+    JsonDocument doc;
+    const DeserializationError err = deserializeJson(doc, p.c_str());
+    if (err || !doc.is<JsonObject>()) {
+      rejectCommand("pack", "payload must be a JSON dps object");
+      return;
+    }
+    String fragment = p;
+    if (doc["dps"].is<JsonObject>()) {
+      fragment = "";
+      serializeJson(doc["dps"], fragment);
+    }
+    sendDpSet(fragment, "pack");
     return;
   }
   if (t == settings.mqttTopicCmdStart) {
@@ -1798,6 +1877,7 @@ void setup() {
   initDisplay();
   loadSettings();
   profilesInit();
+  browserProfileInit();
   profilesLoadCustomFromNvs();
   profilesSetBuiltinControl("single-phase", settings.dpSingleChargeId,
                             settings.dpSingleCurrentId,
@@ -1810,7 +1890,7 @@ void setup() {
   profilesSetBuiltinControl("F-OBZ2", settings.dpObz2ChargeId,
                             settings.dpObz2CurrentId, 0, 0);
   if (strcmp(settings.profileId, "auto") != 0 &&
-      !profileFind(settings.profileId)) {
+      !profileFind(settings.profileId) && !browserProfileSelected()) {
     Serial.printf("[profile] selected '%s' is not loaded; using auto\n",
                   settings.profileId);
     snprintf(settings.profileId, sizeof(settings.profileId), "auto");
