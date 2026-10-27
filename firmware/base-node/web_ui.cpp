@@ -1522,6 +1522,11 @@ void handleProfileConverter() {
   server->send_P(200, "application/javascript", PROFILE_CONVERTER_JS);
 }
 
+void handleProfileMapping() {
+  server->sendHeader("Cache-Control", "no-store");
+  server->send_P(200, "application/javascript", PROFILE_MAPPING_JS);
+}
+
 void handleProfileOffline() {
   addProfileCors();
   server->sendHeader("Cache-Control", "no-store");
@@ -1534,6 +1539,7 @@ void handleProfileInfo() {
   doc["ha_device_id"] = settings.haDeviceId;
   doc["state_topic"] = settings.mqttTopicDps;
   doc["command_topic"] = browserProfileCommandTopic();
+  doc["raw_entity_id"] = browserProfileRawEntityId();
   doc["availability_topic"] = settings.mqttTopicAvailability;
   doc["selection"] = settings.profileId;
   doc["pack_loaded"] = browserProfileLoaded();
@@ -1552,19 +1558,55 @@ void handleProfileInfo() {
   server->send(200, "application/json", json);
 }
 
-void handleProfileSave() {
+void handleProfileOptions() {
   addProfileCors();
-  if (!server->hasArg("pack")) {
-    server->send(400, "application/json",
-                 "{\"ok\":false,\"error\":\"missing pack\"}");
+  server->send(204, "text/plain", "");
+}
+
+bool profileStreamOk = false;
+String profileStreamError;
+
+void handleProfileRaw() {
+  HTTPRaw &raw = server->raw();
+  if (raw.status == RAW_START) {
+    profileStreamOk = false;
+    profileStreamError = "";
+    browserProfileStreamBegin();
     return;
   }
-  const String pack = server->arg("pack");
-  String error;
-  if (!browserProfileValidateAndSave(pack, error)) {
+  if (raw.status == RAW_WRITE) {
+    if (profileStreamError.length() == 0 && raw.currentSize > 0) {
+      String error;
+      if (!browserProfileStreamFeed(raw.buf, raw.currentSize, error)) {
+        profileStreamError = error;
+      }
+    }
+    return;
+  }
+  if (raw.status == RAW_END) {
+    if (profileStreamError.length() == 0) {
+      String error;
+      if (browserProfileStreamFinish(error)) {
+        profileStreamOk = true;
+      } else {
+        profileStreamError = error;
+      }
+    }
+    return;
+  }
+  if (raw.status == RAW_ABORTED) {
+    profileStreamError = "profile upload aborted";
+    browserProfileStreamAbort();
+  }
+}
+
+void handleProfileSave() {
+  addProfileCors();
+  if (!profileStreamOk) {
     JsonDocument doc;
     doc["ok"] = false;
-    doc["error"] = error;
+    doc["error"] = profileStreamError.length() ? profileStreamError
+                                                : "profile upload was not received";
     String json;
     serializeJson(doc, json);
     server->send(400, "application/json", json);
@@ -1624,9 +1666,11 @@ void webUiBegin() {
   server->on("/settings", HTTP_GET, handleSettings);
   server->on("/profiles", HTTP_GET, handleProfileBuilder);
   server->on("/profile_converter.mjs", HTTP_GET, handleProfileConverter);
+  server->on("/profile_mapping.mjs", HTTP_GET, handleProfileMapping);
   server->on("/api/profile/info", HTTP_GET, handleProfileInfo);
   server->on("/api/profile/offline", HTTP_GET, handleProfileOffline);
-  server->on("/api/profile/save", HTTP_POST, handleProfileSave);
+  server->on("/api/profile/save", HTTP_POST, handleProfileSave, handleProfileRaw);
+  server->on("/api/profile/save", HTTP_OPTIONS, handleProfileOptions);
   server->on("/api/status", HTTP_GET, handleApiStatus);
   server->on("/save", HTTP_POST, handleSave);
   server->on("/factory", HTTP_POST, handleFactory);

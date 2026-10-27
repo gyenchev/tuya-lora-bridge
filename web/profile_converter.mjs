@@ -1,5 +1,25 @@
 // Shared tuya-local -> Tuya LoRa browser profile converter.
 // Used by the browser builder and by the Node catalog generator.
+//
+// The converter emits precompiled HA MQTT discovery configs. The ESP32 only
+// publishes those configs and relays raw `dps` command JSON; all state and
+// command mapping runs in Home Assistant templates.
+
+import {
+  Ctx,
+  boolValue,
+  commandTemplate,
+  emitWriteTo,
+  formatFieldsTemplate,
+  formatHaToField,
+  formatPackTemplate,
+  formatStruct,
+  lit,
+  mappingRules,
+  numberValue,
+  stateTemplate,
+  text,
+} from "./profile_mapping.mjs";
 
 export const SIMPLE_ENTITIES = new Set([
   "sensor",
@@ -11,34 +31,27 @@ export const SIMPLE_ENTITIES = new Set([
   "text",
 ]);
 
-const ENTITY_TYPE = {
-  sensor: "sensor",
-  binary_sensor: "binary_sensor",
-  switch: "switch",
-  number: "number",
-  select: "select",
-  button: "button",
-  text: "text",
-};
-
-const PRIMARY_DP = {
-  sensor: "sensor",
-  binary_sensor: "sensor",
-  switch: "switch",
-  number: "value",
-  select: "option",
-  button: "button",
-  text: "value",
-};
-
-const DP_TYPES = new Set(["string", "boolean", "integer", "bitfield", "float"]);
-const UNSUPPORTED_MAP_KEYS = new Set([
-  "value_redirect",
-  "constraint",
-  "conditions",
-  "value_mirror",
-  "invalid",
-  "target_range",
+const NATIVE_ENTITIES = new Set([
+  ...SIMPLE_ENTITIES,
+  "light",
+  "fan",
+  "cover",
+  "climate",
+  "water_heater",
+  "humidifier",
+  "lock",
+  "vacuum",
+  "alarm_control_panel",
+  "siren",
+  "valve",
+  "event",
+  "time",
+  "datetime",
+  "lawn_mower",
+  "camera",
+  "media_player",
+  "remote",
+  "infrared",
 ]);
 
 const GROUP_ORDER = [
@@ -62,16 +75,25 @@ const GROUP_ORDER = [
   "Other",
 ];
 
+const DP_TYPES = new Set([
+  "string",
+  "boolean",
+  "integer",
+  "bitfield",
+  "float",
+  "json",
+  "base64",
+  "utf16b64",
+  "hex",
+  "unixtime",
+]);
+
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
-}
-
-function text(value) {
-  return value === null || value === undefined ? "" : String(value);
 }
 
 function titleCase(value) {
@@ -119,6 +141,10 @@ function entityName(entity) {
   if (translation === "status") return "Status";
   if (translation === "voltage_x") return `Voltage ${text(placeholders.x)}`.trim();
   if (translation === "current_x") return `Current ${text(placeholders.x)}`.trim();
+  if (translation === "power_x") return `Power ${text(placeholders.x)}`.trim();
+  if (translation === "switch") return "Switch";
+  if (translation === "brightness") return "Brightness";
+  if (translation === "color_temp") return "Color temperature";
   if (translation) return titleCase(translation);
   if (entity?.class) return titleCase(entity.class);
   return titleCase(text(entity?.entity || "Sensor").replace(/_/g, " "));
@@ -144,7 +170,7 @@ export function classifyGroup(yaml, filename = "") {
   if (types.has("humidifier")) return "Humidifiers";
   if (types.has("siren")) return "Sirens";
   if (types.has("valve")) return "Valves";
-  if (types.has("media_player")) return "Media players";
+  if (types.has("media_player") || types.has("remote") || types.has("infrared")) return "Media players";
   if (types.has("lawn_mower")) return "Lawn mowers";
   if (types.has("time") || types.has("datetime")) return "Time controls";
   if (types.has("switch") || types.has("number") || types.has("select") || types.has("button")) {
@@ -153,409 +179,1730 @@ export function classifyGroup(yaml, filename = "") {
   return "Sensors";
 }
 
-function sortGroups(groups) {
+export function groupOrder(groups) {
   const present = new Set(groups);
   return GROUP_ORDER.filter((group) => present.has(group));
 }
 
-function safeNumber(value, min = -1e9, max = 1e9) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  if (value < min || value > max) return null;
+function safeUnit(unit) {
+  const value = text(unit);
+  if (value === "C") return "°C";
+  if (value === "F") return "°F";
+  if (value === "ugm3") return "µg/m³";
+  if (value === "m2") return "m²";
   return value;
 }
 
-function toBoolean(value) {
-  if (value === true) return true;
-  if (value === false) return false;
-  if (typeof value === "number" && Number.isFinite(value)) return value !== 0;
-  if (typeof value === "string") {
-    const lower = value.toLowerCase();
-    if (["true", "1", "on", "yes", "open"].includes(lower)) return true;
-    if (["false", "0", "off", "no", "close"].includes(lower)) return false;
+function parseDp(raw, entity, index) {
+  const dp = {
+    ...raw,
+    id: String(raw.id),
+    rawtype: DP_TYPES.has(raw.type) ? raw.type : "string",
+    index,
+    name: text(raw.name),
+    mapping: Array.isArray(raw.mapping) ? raw.mapping.filter((r) => r && typeof r === "object") : [],
+    range: isObject(raw.range) ? raw.range : null,
+    format: Array.isArray(raw.format) ? raw.format : null,
+    mask: raw.mask ? String(raw.mask) : null,
+    mask_signed: raw.mask_signed === true,
+    endianness: raw.endianness === "little" ? "little" : "big",
+    readonly: raw.readonly === true,
+    optional: raw.optional === true,
+    hidden: raw.hidden === true,
+    unit: safeUnit(raw.unit),
+    class: text(raw.class),
+    precision: Number.isInteger(raw.precision) ? raw.precision : null,
+    entity,
+  };
+  return dp;
+}
+
+function parseEntity(raw, index) {
+  const dps = asArray(raw.dps).map((dp, dpIndex) => parseDp(dp, raw, dpIndex));
+  const byName = new Map();
+  for (const dp of dps) byName.set(dp.name, dp);
+  const entity = {
+    raw,
+    index,
+    type: raw.entity,
+    name: entityName(raw).slice(0, 31),
+    class: text(raw.class),
+    category: text(raw.category),
+    icon: text(raw.icon),
+    hidden: raw.hidden === true,
+    deprecated: raw.deprecated === true,
+    dps,
+    byName,
+    consumed: new Set(),
+  };
+  return entity;
+}
+
+function use(entity, roleName) {
+  const dp = entity.byName.get(roleName);
+  if (dp) entity.consumed.add(dp.name);
+  return dp || null;
+}
+
+function useDp(entity, dp) {
+  if (dp) entity.consumed.add(dp.name);
+  return dp;
+}
+
+function normalizeRuleValues(rule, fn) {
+  const out = { ...rule };
+  if (Object.prototype.hasOwnProperty.call(out, "value")) {
+    const normalized = fn(out.value);
+    if (normalized !== null) out.value = normalized;
   }
-  return null;
-}
-
-function toNumber(value) {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "boolean") return value ? 1 : 0;
-  if (typeof value === "string" && value.trim() !== "") {
-    const number = Number(value);
-    if (Number.isFinite(number)) return number;
+  if (Array.isArray(out.conditions)) {
+    out.conditions = out.conditions.map((cond) => {
+      const c = { ...cond };
+      if (Object.prototype.hasOwnProperty.call(c, "value")) {
+        const normalized = fn(c.value);
+        if (normalized !== null) c.value = normalized;
+      }
+      if (Array.isArray(c.mapping)) {
+        c.mapping = c.mapping.map((m) => {
+          const n = { ...m };
+          if (Object.prototype.hasOwnProperty.call(n, "value")) {
+            const normalizedValue = fn(n.value);
+            if (normalizedValue !== null) n.value = normalizedValue;
+          }
+          return n;
+        });
+      }
+      return c;
+    });
   }
-  return null;
+  return out;
 }
 
-function jinjaLiteral(value) {
-  if (value === null || value === undefined) return "none";
-  if (typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return "none";
+function normalizeDp(dp, fn) {
+  return { ...dp, mapping: dp.mapping.map((r) => normalizeRuleValues(r, fn)) };
 }
 
-function rawExpr(dp) {
-  return `value_json.dps.get(${JSON.stringify(String(dp.id))})`;
+function stateFor(entity, dp, options = {}) {
+  const { code, var: v } = stateTemplate(entity, dp, options);
+  return { code, var: v };
 }
 
-function scaledExpr(dp, scale) {
-  const raw = rawExpr(dp);
-  if (!scale || scale === 1) return raw;
-  return `((${raw} | default(0, true)) | float / ${scale})`;
+function stateTemplateFull(entity, dp, options = {}) {
+  const { code, var: v } = stateFor(entity, dp, options);
+  const dpsVar = options.dpsVar || "dps";
+  const prelude = options.prelude === false ? "" : `{% set ${dpsVar} = value_json.dps %}\n`;
+  const output = options.transform ? options.transform(v) : `{{ ${v} }}`;
+  return `${prelude}${code}${output}`;
 }
 
-function mappedExpr(dp, mapping) {
-  const explicit = mapping.items.filter((item) => item.hasFrom);
-  if (!explicit.length) {
-    const fallback = mapping.defaultItem ? jinjaLiteral(mapping.defaultItem.to) : "none";
-    return `(${rawExpr(dp)} | default(${fallback}, true))`;
+function boolStateTemplate(entity, dp) {
+  const normalized = normalizeDp(dp, boolValue);
+  const { code, var: v } = stateFor(entity, normalized);
+  return `{% set dps = value_json.dps %}\n${code}{{ 'ON' if (${v} is number and ${v} != 0) or (${v} | string | lower in ['true','on','1','yes','open','enabled','detected']) else 'OFF' }}`;
+}
+
+function numberStateTemplate(entity, dp) {
+  const normalized = normalizeDp(dp, numberValue);
+  return stateTemplateFull(entity, normalized);
+}
+
+function textStateTemplate(entity, dp) {
+  return stateTemplateFull(entity, dp, { transform: (v) => `{{ ${v} | default('') }}` });
+}
+
+function commandFor(entity, dp, targetExpr, info) {
+  return commandTemplate(entity, dp, targetExpr, { rawEntity: info.rawEntity }).code;
+}
+
+function commandForMany(entity, writes, info) {
+  const ctx = new Ctx();
+  const rawEntity = info.rawEntity || "__RAW_ENTITY__";
+  let code = `{% set dps = state_attr(${lit(rawEntity)}, "dps") or {} %}\n{% set writes = {} %}\n`;
+  for (const write of writes) {
+    if (!write || !write.dp) continue;
+    code += emitWriteTo(entity, write.dp, write.target, ctx, "writes");
   }
-  const entries = explicit.map((item) => `${jinjaLiteral(item.from)}: ${jinjaLiteral(item.to)}`);
-  const dict = `{${entries.join(", ")}}`;
-  const fallback = mapping.defaultItem ? `, ${jinjaLiteral(mapping.defaultItem.to)}` : "";
-  return `${dict}.get(${rawExpr(dp)}${fallback})`;
+  code += "{{ writes | tojson }}";
+  return code;
 }
 
 function attributesTemplate(entity) {
+  const extras = entity.dps.filter((dp) => !entity.consumed.has(dp.name) && !dp.hidden);
+  if (!extras.length) return null;
+  const ctx = new Ctx("a");
   const entries = [];
-  for (let i = 1; i < entity.dps.length; i += 1) {
-    const dp = entity.dps[i];
-    if (dp.hidden) continue;
-    let expr;
-    if (dp.mapping) expr = mappedExpr(dp, dp.mapping);
-    else if (dp.scale && dp.scale !== 1) expr = scaledExpr(dp, dp.scale);
-    else expr = rawExpr(dp);
-    entries.push(`${JSON.stringify(dp.name)}: ${expr}`);
-  }
-  if (!entries.length) return null;
-  return `{{ {${entries.join(", ")}} | tojson }}`;
-}
-
-function parseMapping(dp, entityType, primary, path) {
-  if (dp.mapping === undefined) return null;
-  if (!Array.isArray(dp.mapping)) throw new Error(`${path}.mapping must be an array`);
-
-  const items = [];
-  let standaloneScale = null;
-  for (const rule of dp.mapping) {
-    if (!isObject(rule)) throw new Error(`${path}.mapping entries must be objects`);
-    if ([...UNSUPPORTED_MAP_KEYS].some((key) => key in rule)) {
-      throw new Error(`${path}.mapping uses an unsupported feature`);
+  let code = "";
+  for (const dp of extras.slice(0, 24)) {
+    const { code: dpCode, var: v } = stateFor(entity, dp, { ctx });
+    code += dpCode;
+    if (dp.rawtype === "json") {
+      code += `{% if ${v} is not none %}{% set ${v} = ${v} | from_json %}{% endif %}\n`;
     }
-    const hasFrom = "dps_val" in rule && rule.dps_val !== null;
-    const hasTo = "value" in rule;
-    const hasScale = "scale" in rule;
-    if (hasScale && !hasFrom && !hasTo) {
-      const scale = safeNumber(rule.scale, 0.000001, 10000);
-      if (scale === null) throw new Error(`${path}.mapping scale must be positive`);
-      standaloneScale = scale;
-      continue;
-    }
-    if (hasScale) throw new Error(`${path}.mapping scale must be standalone`);
-    if (!hasFrom && !hasTo) throw new Error(`${path}.mapping rule is empty`);
-
-    const item = {
-      hasFrom,
-      hidden: rule.hidden === true,
-    };
-    if (hasFrom && rule.dps_val !== null) item.from = rule.dps_val;
-    if (hasTo) item.to = rule.value;
-    else if (hasFrom && rule.dps_val !== null) item.to = rule.dps_val;
-    else throw new Error(`${path}.mapping non-default rule needs a value`);
-    items.push(item);
+    let key = dp.name || `dp_${dp.id}`;
+    if (entries.some((e) => e.key === key)) key = `${key}_${dp.id}`;
+    entries.push({ key, var: v });
   }
-
-  if (standaloneScale !== null && items.length) {
-    throw new Error(`${path} combines scale and value mappings, which is not supported yet`);
-  }
-
-  if (primary) {
-    for (const item of items) {
-      if (!item.hasFrom) continue;
-      if (entityType === "switch" || entityType === "binary_sensor" || entityType === "button") {
-        const value = toBoolean(item.to);
-        if (value === null) throw new Error(`${path} mapping values must be boolean for ${entityType}`);
-        item.to = value;
-      } else if (entityType === "number") {
-        const value = toNumber(item.to);
-        if (value === null) throw new Error(`${path} mapping values must be numeric for number`);
-        item.to = value;
-      } else if (entityType === "select") {
-        item.to = text(item.to);
-      }
-    }
-    const defaultItem = items.find((item) => !item.hasFrom);
-    if (defaultItem && (entityType === "switch" || entityType === "binary_sensor" || entityType === "button")) {
-      const value = toBoolean(defaultItem.to);
-      if (value === null) throw new Error(`${path} default mapping must be boolean`);
-      defaultItem.to = value;
-    }
-    if (defaultItem && entityType === "number") {
-      const value = toNumber(defaultItem.to);
-      if (value === null) throw new Error(`${path} default mapping must be numeric`);
-      defaultItem.to = value;
-    }
-    if (defaultItem && entityType === "select") defaultItem.to = text(defaultItem.to);
-    return {
-      items,
-      defaultItem,
-      scale: standaloneScale ?? 1,
-    };
-  }
-
-  return {
-    items,
-    defaultItem: items.find((item) => !item.hasFrom) || null,
-    scale: standaloneScale ?? 1,
-  };
+  const dict = entries.map((e) => `${JSON.stringify(e.key)}: ${e.var}`).join(", ");
+  return `{% set dps = value_json.dps %}\n${code}{{ {${dict}} | tojson }}`;
 }
 
-function parseRange(range, path) {
-  if (range === undefined) return null;
-  if (!isObject(range)) throw new Error(`${path}.range must be an object`);
-  const min = safeNumber(range.min);
-  const max = safeNumber(range.max);
-  if (min === null || max === null || max < min) {
-    throw new Error(`${path}.range needs numeric min/max`);
-  }
-  const step = range.step === undefined ? 1 : safeNumber(range.step, 0.000001, 1e6);
-  if (step === null) throw new Error(`${path}.range.step must be positive`);
-  return { min, max, step };
+function addAttributes(config, entity, info) {
+  // The ESP32 publishes a hidden raw-DP sensor with every DP as an attribute.
+  // That keeps every DP visible without duplicating large attribute templates
+  // in every entity, which matters for the 48 KB pack budget.
+  return;
 }
 
-function parseDp(dp, entityType, index, path) {
-  if (!isObject(dp)) throw new Error(`${path} must be an object`);
-  if (!DP_TYPES.has(dp.type)) throw new Error(`${path}.type is not supported`);
-  if (!Number.isInteger(dp.id) || dp.id < 1 || dp.id > 999) {
-    throw new Error(`${path}.id must be 1-999`);
-  }
-  const name = text(dp.name);
-  if (!/^[A-Za-z_][A-Za-z0-9_]{0,22}$/.test(name)) {
-    throw new Error(`${path}.name is invalid or too long`);
-  }
-  const primary = index === 0;
-  const expected = PRIMARY_DP[entityType];
-  if (primary && name !== expected) throw new Error(`${path}.name must be ${expected}`);
-  if (!primary && name === expected) throw new Error(`${path}.name reuses the primary name`);
-
-  const parsedMapping = parseMapping(dp, entityType, primary, path);
-  const mapping = parsedMapping && parsedMapping.items.length ? parsedMapping : null;
-  const range = parseRange(dp.range, path);
-  let dpScale = 1;
-  if (dp.scale !== undefined) {
-    const value = safeNumber(dp.scale, 0.000001, 10000);
-    if (value === null) throw new Error(`${path}.scale must be positive`);
-    dpScale = value;
-  }
-  const scale = parsedMapping?.scale ?? dpScale;
-  if (dp.scale !== undefined && mapping && mapping.items.length) {
-    throw new Error(`${path} combines scale and value mappings, which is not supported yet`);
-  }
-  if (entityType === "number" && primary && !range) {
-    throw new Error(`${path} needs a range for a number entity`);
-  }
-  if (entityType === "text" && primary && dp.type !== "string") {
-    throw new Error(`${path} must be a string for a text entity`);
-  }
-
-  return {
-    id: dp.id,
-    type: dp.type,
-    name,
-    unit: text(dp.unit),
-    stateClass: text(dp.class),
-    precision: Number.isInteger(dp.precision) && dp.precision >= 0 && dp.precision <= 10
-      ? dp.precision
-      : null,
-    optional: dp.optional === true,
-    readonly: dp.readonly === true,
-    hidden: dp.hidden === true,
-    scale,
-    range,
-    mapping,
-  };
-}
-
-function boolStateExpr(dp) {
-  if (dp.mapping) return mappedExpr(dp, dp.mapping);
-  if (dp.type === "boolean") return `(${rawExpr(dp)} | default(false, true))`;
-  if (dp.type === "integer" || dp.type === "bitfield") {
-    return `((${rawExpr(dp)} | default(0, true)) | int) != 0`;
-  }
-  throw new Error(`${dp.name} needs a mapping for a string DP`);
-}
-
-function switchCommands(dp) {
-  if (dp.mapping) {
-    const on = dp.mapping.items.find((item) => item.hasFrom && !item.hidden && item.to === true);
-    const off = dp.mapping.items.find((item) => item.hasFrom && !item.hidden && item.to === false);
-    if (on && off) return { on: on.from, off: off.from };
-    if (dp.type !== "boolean" && dp.type !== "integer" && dp.type !== "bitfield") {
-      throw new Error(`${dp.name} switch mapping needs on and off values`);
-    }
-  }
-  if (dp.type === "boolean") return { on: true, off: false };
-  if (dp.type === "integer" || dp.type === "bitfield") return { on: 1, off: 0 };
-  throw new Error(`${dp.name} switch needs a mapping for a string DP`);
-}
-
-function buttonPressValue(dp) {
-  if (dp.mapping) {
-    const press = dp.mapping.items.find((item) => item.hasFrom && !item.hidden && item.to === true);
-    if (press) return press.from;
-    if (dp.type !== "boolean" && dp.type !== "integer" && dp.type !== "bitfield") {
-      throw new Error(`${dp.name} button needs a press mapping`);
-    }
-  }
-  if (dp.type === "boolean") return true;
-  if (dp.type === "integer" || dp.type === "bitfield") return 1;
-  throw new Error(`${dp.name} button needs a press mapping`);
-}
-
-function numberCommandExpr(dp) {
-  if (dp.mapping) {
-    const entries = dp.mapping.items
-      .filter((item) => item.hasFrom && !item.hidden)
-      .map((item) => `${jinjaLiteral(item.to)}: ${jinjaLiteral(item.from)}`);
-    if (entries.length) {
-      const fallback = dp.mapping.items.find((item) => item.hasFrom && !item.hidden);
-      return `{${entries.join(", ")}}.get(value | float, ${jinjaLiteral(fallback.from)})`;
-    }
-    if (dp.type !== "integer" && dp.type !== "bitfield" && dp.type !== "float") {
-      throw new Error(`${dp.name} number mapping is empty`);
-    }
-  }
-  const scaled = `(value | float * ${dp.scale})`;
-  if (dp.type === "integer" || dp.type === "bitfield") return `(${scaled} | round(0) | int)`;
-  return `(${scaled} | round(3))`;
-}
-
-function selectCommandExpr(dp) {
-  const items = dp.mapping?.items.filter((item) => item.hasFrom && !item.hidden) || [];
-  if (!items.length) throw new Error(`${dp.name} select needs visible options`);
-  const entries = items.map((item) => `${jinjaLiteral(text(item.to))}: ${jinjaLiteral(item.from)}`);
-  return `{${entries.join(", ")}}.get(value, ${jinjaLiteral(items[0].from)})`;
-}
-
-function sensorExpression(dp) {
-  if (dp.mapping) return mappedExpr(dp, dp.mapping);
-  if (dp.type === "integer" || dp.type === "bitfield" || dp.type === "float") {
-    return scaledExpr(dp, dp.scale);
-  }
-  return rawExpr(dp);
-}
-
-function selectOptions(dp) {
-  return (dp.mapping?.items || [])
-    .filter((item) => item.hasFrom && !item.hidden)
-    .map((item) => text(item.to));
-}
-
-function enumOptions(dp) {
-  const options = new Set(["unknown"]);
-  for (const item of dp.mapping?.items || []) {
-    if (!item.hidden) options.add(text(item.to));
-  }
-  return [...options];
-}
-
-function buildDiscovery(entity, index, info) {
-  const dps = entity.dps;
-  const primary = dps[0];
-  const component = entity.type;
-  const objectId = `e${index}`;
-  const config = {
-    name: entity.name,
-  };
-  if (entity.class) config.device_class = entity.class;
+function commonEntityConfig(entity, config) {
+  config.name = entity.name;
   if (entity.category) config.entity_category = entity.category;
   if (entity.icon) config.icon = entity.icon;
-  if (entity.hidden) config.enabled_by_default = false;
-
-  if (component === "button") {
-    config.command_topic = info.commandTopic;
-    config.payload_press = JSON.stringify({ [String(primary.id)]: buttonPressValue(primary) });
-    if (entity.class) config.device_class = entity.class;
-    return { component, object_id: objectId, config };
-  }
-
-  config.state_topic = info.stateTopic;
-  const attributes = attributesTemplate(entity);
-
-  if (component === "sensor") {
-    config.value_template = `{{ ${sensorExpression(primary)} }}`;
-    if (primary.unit) config.unit_of_measurement = primary.unit;
-    if (primary.stateClass) config.state_class = primary.stateClass;
-    if (primary.precision !== null) config.suggested_display_precision = primary.precision;
-    if (entity.class === "enum") {
-      if (!primary.mapping) throw new Error(`${entity.name} enum sensor needs a mapping`);
-      config.options = enumOptions(primary);
-    }
-  } else if (component === "binary_sensor") {
-    config.value_template = `{{ 'ON' if ${boolStateExpr(primary)} else 'OFF' }}`;
-    config.payload_on = "ON";
-    config.payload_off = "OFF";
-  } else if (component === "switch") {
-    config.value_template = `{{ 'ON' if ${boolStateExpr(primary)} else 'OFF' }}`;
-    config.payload_on = "ON";
-    config.payload_off = "OFF";
-    config.command_topic = info.commandTopic;
-    const { on, off } = switchCommands(primary);
-    config.command_template =
-      `{{ {${JSON.stringify(String(primary.id))}: (${jinjaLiteral(on)} if value == 'ON' else ${jinjaLiteral(off)})} | tojson }}`;
-  } else if (component === "number") {
-    config.value_template = `{{ ${sensorExpression(primary)} }}`;
-    config.command_topic = info.commandTopic;
-    config.command_template =
-      `{{ {${JSON.stringify(String(primary.id))}: ${numberCommandExpr(primary)}} | tojson }}`;
-    config.min = primary.range.min;
-    config.max = primary.range.max;
-    config.step = primary.range.step;
-    config.mode = "box";
-    if (primary.unit) config.unit_of_measurement = primary.unit;
-  } else if (component === "select") {
-    const options = selectOptions(primary);
-    if (!options.length) throw new Error(`${entity.name} select needs visible options`);
-    config.value_template = `{{ ${mappedExpr(primary, primary.mapping)} }}`;
-    config.command_topic = info.commandTopic;
-    config.command_template =
-      `{{ {${JSON.stringify(String(primary.id))}: ${selectCommandExpr(primary)}} | tojson }}`;
-    config.options = options;
-  } else if (component === "text") {
-    config.value_template = `{{ ${rawExpr(primary)} | default("") }}`;
-    config.command_topic = info.commandTopic;
-    config.command_template = `{{ {${JSON.stringify(String(primary.id))}: value} | tojson }}`;
-    if (primary.range) {
-      config.min = Math.max(0, Math.round(primary.range.min));
-      config.max = Math.max(config.min, Math.round(primary.range.max));
-    }
-  } else {
-    throw new Error(`unsupported entity type ${component}`);
-  }
-
-  if (attributes) {
-    config.json_attributes_topic = info.stateTopic;
-    config.json_attributes_template = attributes;
-  }
-  return { component, object_id: objectId, config };
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
 }
 
-function deriveDetect(entities) {
-  const require = [];
-  const groups = [
-    new Set(["sensor", "binary_sensor", "switch"]),
-    new Set(["select", "button", "text", "number"]),
-  ];
-  for (const group of groups) {
-    for (const entity of entities) {
-      if (!group.has(entity.type)) continue;
-      const primary = entity.dps[0];
-      if (primary.optional) continue;
-      if (!require.includes(primary.id)) require.push(primary.id);
-      if (require.length >= 8) return require;
+let objectCounter = 0;
+
+function addItem(items, component, objectId, config) {
+  const safe = String(objectId).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 31) || `e${objectCounter++}`;
+  let unique = safe;
+  let suffix = 2;
+  while (items.some((item) => item.object_id === unique)) {
+    const tail = `_${suffix}`;
+    unique = `${safe.slice(0, 31 - tail.length)}${tail}`;
+    suffix += 1;
+  }
+  items.push({ component, object_id: unique, config });
+}
+
+function boolOptions(dp) {
+  return mappingRules(dp).filter((r) => !r.hidden && Object.prototype.hasOwnProperty.call(r, "value")).length > 0;
+}
+
+function visibleValues(dp, { normalize = (v) => v, includeHidden = false } = {}) {
+  const values = [];
+  for (const rule of mappingRules(dp)) {
+    if (rule.hidden && !includeHidden) continue;
+    if (!Object.prototype.hasOwnProperty.call(rule, "value")) continue;
+    const value = normalize(rule.value);
+    if (value !== null && !values.some((v) => String(v) === String(value))) values.push(value);
+    for (const cond of asArray(rule.conditions)) {
+      if (cond.hidden || !Object.prototype.hasOwnProperty.call(cond, "value")) continue;
+      const cvalue = normalize(cond.value);
+      if (cvalue !== null && !values.some((v) => String(v) === String(cvalue))) values.push(cvalue);
     }
   }
-  return require;
+  return values;
+}
+
+function rawForLogical(entity, dp, logicalValue, depth = 0) {
+  if (!dp || depth > 4) return null;
+  if (dp.mask || dp.format) return null;
+  if (dp.value_redirect) return null;
+  const rules = mappingRules(dp);
+  let selected = null;
+  for (const rule of rules) {
+    if (!Object.prototype.hasOwnProperty.call(rule, "value") || rule.hidden) continue;
+    if (String(rule.value) === String(logicalValue)) {
+      selected = rule;
+      break;
+    }
+    for (const cond of asArray(rule.conditions)) {
+      if (!cond.hidden && Object.prototype.hasOwnProperty.call(cond, "value") &&
+          String(cond.value) === String(logicalValue)) {
+        selected = { ...rule, ...cond };
+        break;
+      }
+    }
+    if (selected) break;
+  }
+  let raw = selected && Object.prototype.hasOwnProperty.call(selected, "dps_val")
+    ? selected.dps_val
+    : logicalValue;
+  if (selected?.value_mirror) return null;
+  if (selected?.value_redirect) {
+    const target = entity.byName.get(selected.value_redirect);
+    return rawForLogical(entity, target, logicalValue, depth + 1);
+  }
+  const scale = selected?.scale === undefined ? 1 : Number(selected.scale);
+  if (Number.isFinite(scale) && scale !== 0 && scale !== 1 && typeof raw === "number") raw *= scale;
+  const targetRange = selected?.target_range;
+  if (targetRange && dp.range && targetRange.min !== undefined && targetRange.max !== undefined && typeof raw === "number") {
+    const fmin = Number(targetRange.min);
+    const fmax = Number(targetRange.max);
+    const tmin = Number(dp.range.min);
+    const tmax = Number(dp.range.max);
+    if (fmax !== fmin) raw = tmin + ((raw - fmin) * (tmax - tmin)) / (fmax - fmin);
+  }
+  if (selected?.invert && dp.range && typeof raw === "number") {
+    raw = -raw + Number(dp.range.min) + Number(dp.range.max);
+  }
+  if (selected?.step && typeof raw === "number") raw = Number(selected.step) * Math.round(raw / Number(selected.step));
+  if (dp.rawtype === "utf16b64" && typeof raw === "string") return utf16beBase64(raw);
+  return raw;
+}
+
+function utf16beBase64(value) {
+  const bytes = [];
+  for (const ch of String(value)) {
+    const code = ch.codePointAt(0);
+    if (code <= 0xffff) {
+      bytes.push((code >> 8) & 0xff, code & 0xff);
+    } else {
+      const v = code - 0x10000;
+      const hi = 0xd800 + (v >> 10);
+      const lo = 0xdc00 + (v & 0x3ff);
+      bytes.push(hi >> 8, hi & 0xff, lo >> 8, lo & 0xff);
+    }
+  }
+  if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64");
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary);
+}
+
+function staticFragment(entity, dp, logicalValue) {
+  if (!dp) return null;
+  const raw = rawForLogical(entity, dp, logicalValue);
+  if (raw === null || raw === undefined) return null;
+  return JSON.stringify({ [dp.id]: raw });
+}
+
+function staticFragments(entity, writes) {
+  const out = {};
+  for (const write of writes) {
+    if (!write?.dp) continue;
+    const raw = rawForLogical(entity, write.dp, write.value);
+    if (raw !== null && raw !== undefined) out[write.dp.id] = raw;
+  }
+  return Object.keys(out).length ? JSON.stringify(out) : null;
+}
+
+function addSimpleAttributes(config, entity, info) {
+  addAttributes(config, entity, info);
+}
+
+function buildSensor(entity, info) {
+  const primary = use(entity, "sensor") || useDp(entity, entity.dps[0]);
+  if (!primary) return [];
+  const dp = entity.class === "enum" ? normalizeDp(primary, text) : primary;
+  const config = {
+    state_topic: info.stateTopic,
+    value_template: stateTemplateFull(entity, dp),
+  };
+  commonEntityConfig(entity, config);
+  if (entity.class) config.device_class = entity.class;
+  if (primary.unit) config.unit_of_measurement = primary.unit;
+  if (primary.class) config.state_class = primary.class;
+  if (primary.precision !== null) config.suggested_display_precision = primary.precision;
+  if (entity.class === "enum") {
+    const options = visibleValues(primary, { normalize: text });
+    config.options = options.length ? options : ["unknown"];
+  }
+  addSimpleAttributes(config, entity, info);
+  return [{ component: "sensor", object_id: `e${entity.index}`, config }];
+}
+
+function buildBinarySensor(entity, info) {
+  const primary = use(entity, "sensor") || useDp(entity, entity.dps[0]);
+  if (!primary) return [];
+  const config = {
+    state_topic: info.stateTopic,
+    value_template: boolStateTemplate(entity, primary),
+    payload_on: "ON",
+    payload_off: "OFF",
+  };
+  commonEntityConfig(entity, config);
+  if (entity.class) config.device_class = entity.class;
+  addSimpleAttributes(config, entity, info);
+  return [{ component: "binary_sensor", object_id: `e${entity.index}`, config }];
+}
+
+function buildSwitch(entity, info) {
+  const primary = use(entity, "switch") || useDp(entity, entity.dps[0]);
+  if (!primary) return [];
+  const normalized = normalizeDp(primary, boolValue);
+  const config = {
+    state_topic: info.stateTopic,
+    value_template: boolStateTemplate(entity, primary),
+    command_topic: info.commandTopic,
+    command_template: commandFor(entity, normalized, "(true if value == 'ON' else false)", info),
+    payload_on: "ON",
+    payload_off: "OFF",
+  };
+  commonEntityConfig(entity, config);
+  if (entity.class) config.device_class = entity.class;
+  addSimpleAttributes(config, entity, info);
+  return [{ component: "switch", object_id: `e${entity.index}`, config }];
+}
+
+function buildNumber(entity, info) {
+  const primary = use(entity, "value") || useDp(entity, entity.dps[0]);
+  if (!primary) return [];
+  const normalized = normalizeDp(primary, numberValue);
+  const config = {
+    state_topic: info.stateTopic,
+    value_template: numberStateTemplate(entity, primary),
+    command_topic: info.commandTopic,
+    command_template: commandFor(entity, normalized, "(value | float)", info),
+    min: primary.range?.min ?? 0,
+    max: primary.range?.max ?? 100,
+    step: primary.range?.step ?? 1,
+    mode: "box",
+  };
+  commonEntityConfig(entity, config);
+  if (entity.class) config.device_class = entity.class;
+  if (primary.unit) config.unit_of_measurement = primary.unit;
+  addSimpleAttributes(config, entity, info);
+  return [{ component: "number", object_id: `e${entity.index}`, config }];
+}
+
+function buildSelect(entity, info) {
+  const primary = use(entity, "option") || useDp(entity, entity.dps[0]);
+  if (!primary) return [];
+  const options = visibleValues(primary, { normalize: text });
+  if (!options.length) return [];
+  const normalized = normalizeDp(primary, text);
+  const config = {
+    state_topic: info.stateTopic,
+    value_template: stateTemplateFull(entity, normalized),
+    command_topic: info.commandTopic,
+    command_template: commandFor(entity, normalized, "value", info),
+    options,
+  };
+  commonEntityConfig(entity, config);
+  if (entity.class) config.device_class = entity.class;
+  addSimpleAttributes(config, entity, info);
+  return [{ component: "select", object_id: `e${entity.index}`, config }];
+}
+
+function buildText(entity, info) {
+  const primary = use(entity, "value") || useDp(entity, entity.dps[0]);
+  if (!primary) return [];
+  const config = {
+    state_topic: info.stateTopic,
+    value_template: textStateTemplate(entity, primary),
+    command_topic: info.commandTopic,
+    command_template: commandFor(entity, primary, "value", info),
+  };
+  commonEntityConfig(entity, config);
+  if (primary.range?.min !== undefined) config.min = Math.max(0, Math.round(primary.range.min));
+  if (primary.range?.max !== undefined) config.max = Math.max(config.min || 0, Math.round(primary.range.max));
+  addSimpleAttributes(config, entity, info);
+  return [{ component: "text", object_id: `e${entity.index}`, config }];
+}
+
+function buildButton(entity, info) {
+  const primary = use(entity, "button") || useDp(entity, entity.dps[0]);
+  if (!primary) return [];
+  let press = true;
+  const values = visibleValues(primary);
+  if (values.length) {
+    press = values.find((v) => boolValue(v) === true) ?? values[0];
+  } else if (primary.rawtype === "integer" || primary.rawtype === "bitfield") {
+    press = 1;
+  } else if (primary.rawtype === "string" && !primary.mapping.length) {
+    press = "";
+  }
+  const raw = rawForLogical(entity, primary, press);
+  if (raw === null || raw === undefined) return [];
+  const config = {
+    command_topic: info.commandTopic,
+    payload_press: JSON.stringify({ [primary.id]: raw }),
+  };
+  commonEntityConfig(entity, config);
+  if (entity.class) config.device_class = entity.class;
+  return [{ component: "button", object_id: `e${entity.index}`, config }];
+}
+
+// ---------------------------------------------------------------------------
+// Light
+// ---------------------------------------------------------------------------
+
+function emitHsvToRgb(ctx, hVar, sVar, vVar, out) {
+  const h = ctx.var("h");
+  const s = ctx.var("s");
+  const v = ctx.var("v");
+  const c = ctx.var("c");
+  const x = ctx.var("x");
+  const m = ctx.var("m");
+  const r = ctx.var("r");
+  const g = ctx.var("g");
+  const b = ctx.var("b");
+  let code = "";
+  code += `{% set ${h} = ((${hVar} | float) % 360) / 60 %}\n`;
+  code += `{% set ${s} = (${sVar} | float) / 100 %}\n`;
+  code += `{% set ${v} = (${vVar} | float) / 255 %}\n`;
+  code += `{% set ${c} = ${v} * ${s} %}\n`;
+  code += `{% set ${x} = ${c} * (1 - ((((${h} % 2) - 1) | abs))) %}\n`;
+  code += `{% set ${m} = ${v} - ${c} %}\n`;
+  code += `{% if ${h} < 1 %}{% set ${r} = ${c} %}{% set ${g} = ${x} %}{% set ${b} = 0 %}\n`;
+  code += `{% elif ${h} < 2 %}{% set ${r} = ${x} %}{% set ${g} = ${c} %}{% set ${b} = 0 %}\n`;
+  code += `{% elif ${h} < 3 %}{% set ${r} = 0 %}{% set ${g} = ${c} %}{% set ${b} = ${x} %}\n`;
+  code += `{% elif ${h} < 4 %}{% set ${r} = 0 %}{% set ${g} = ${x} %}{% set ${b} = ${c} %}\n`;
+  code += `{% elif ${h} < 5 %}{% set ${r} = ${x} %}{% set ${g} = 0 %}{% set ${b} = ${c} %}\n`;
+  code += `{% else %}{% set ${r} = ${c} %}{% set ${g} = 0 %}{% set ${b} = ${x} %}{% endif %}\n`;
+  code += `{% set ${out}r = (((${r} + ${m}) * 255) | round(0) | int) %}\n`;
+  code += `{% set ${out}g = (((${g} + ${m}) * 255) | round(0) | int) %}\n`;
+  code += `{% set ${out}b = (((${b} + ${m}) * 255) | round(0) | int) %}\n`;
+  return code;
+}
+
+function emitRgbToHsv(ctx, rVar, gVar, bVar, out) {
+  const r = ctx.var("rn");
+  const g = ctx.var("gn");
+  const b = ctx.var("bn");
+  const mx = ctx.var("mx");
+  const mn = ctx.var("mn");
+  const d = ctx.var("d");
+  const h = ctx.var("hh");
+  const s = ctx.var("ss");
+  const v = ctx.var("vv");
+  let code = "";
+  code += `{% set ${r} = (${rVar} | float) / 255 %}\n`;
+  code += `{% set ${g} = (${gVar} | float) / 255 %}\n`;
+  code += `{% set ${b} = (${bVar} | float) / 255 %}\n`;
+  code += `{% set ${mx} = [${r}, ${g}, ${b}] | max %}\n`;
+  code += `{% set ${mn} = [${r}, ${g}, ${b}] | min %}\n`;
+  code += `{% set ${d} = ${mx} - ${mn} %}\n`;
+  code += `{% set ${v} = ${mx} %}\n`;
+  code += `{% set ${s} = 0 if ${mx} == 0 else (${d} / ${mx}) * 100 %}\n`;
+  code += `{% if ${d} == 0 %}{% set ${h} = 0 %}\n`;
+  code += `{% elif ${mx} == ${r} %}{% set ${h} = (60 * (((${g} - ${b}) / ${d}) % 6)) %}\n`;
+  code += `{% elif ${mx} == ${g} %}{% set ${h} = 60 * (((${b} - ${r}) / ${d}) + 2) %}\n`;
+  code += `{% else %}{% set ${h} = 60 * (((${r} - ${g}) / ${d}) + 4) %}{% endif %}\n`;
+  code += `{% set ${out}h = ${h} %}\n{% set ${out}s = ${s} %}\n{% set ${out}v = ${v} * 255 %}\n`;
+  return code;
+}
+
+function lightFormatFields(entity, dp, source, ctx, prelude) {
+  const spec = formatStruct(dp);
+  if (!spec) return null;
+  const result = formatFieldsTemplate(entity, dp, { ctx, source, dpsPrelude: prelude });
+  const fields = new Map();
+  for (const field of result.fields) fields.set(field.name, field);
+  return { ...result, fields };
+}
+
+function lightStateColorTemplate(entity, rgb, fieldName) {
+  const ctx = new Ctx("l");
+  const fields = lightFormatFields(entity, rgb, `value_json.dps.get(${lit(String(rgb.id))})`, ctx, "{% set dps = value_json.dps %}\n");
+  if (!fields) return null;
+  let code = fields.code;
+  const get = (name) => fields.fields.get(name)?.var;
+  const h = get("h");
+  const s = get("s");
+  const v = get("v");
+  const r = get("r");
+  const g = get("g");
+  const b = get("b");
+  if (r && g && b) {
+    const scale = (name, field) => {
+      const max = field.max || 255;
+      return `{% set ${name} = ((${name} | float) * ${255 / max}) | round(0) | int %}\n`;
+    };
+    code += scale(r, fields.fields.get("r"));
+    code += scale(g, fields.fields.get("g"));
+    code += scale(b, fields.fields.get("b"));
+    const outVar = `${fieldName}Out`;
+    code += `{% set ${outVar} = ${r} if ${lit(fieldName)} == 'r' else (${g} if ${lit(fieldName)} == 'g' else ${b}) %}\n`;
+    return `${code}{{ ${outVar} }}`;
+  }
+  if (h && s && v) {
+    const rgbOut = ctx.var("rgb");
+    code += emitHsvToRgb(ctx, h, s, v, rgbOut);
+    code += `{% set out = ${rgbOut}${fieldName} %}\n{{ out }}`;
+    return code;
+  }
+  return null;
+}
+
+function buildLight(entity, info) {
+  const switchDp = use(entity, "switch");
+  const brightnessDp = use(entity, "brightness");
+  const colorModeDp = use(entity, "color_mode");
+  const colorTempDp = use(entity, "color_temp");
+  const rgb = use(entity, "rgbhsv");
+  const namedColor = use(entity, "named_color");
+  const effectDp = use(entity, "effect");
+  if (!switchDp && !brightnessDp && !rgb && !namedColor && !effectDp && !colorModeDp) return [];
+
+  const config = {
+    schema: "template",
+    name: entity.name,
+    command_topic: info.commandTopic,
+    state_topic: info.stateTopic,
+  };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+
+  if (switchDp) {
+    config.state_template = boolStateTemplate(entity, switchDp);
+  } else if (brightnessDp) {
+    const { code, var: v } = stateFor(entity, brightnessDp);
+    config.state_template = `{% set dps = value_json.dps %}\n${code}{{ 'ON' if (${v} is number and ${v} > 0) else 'OFF' }}`;
+  } else if (effectDp) {
+    const { code, var: v } = stateFor(entity, effectDp);
+    config.state_template = `{% set dps = value_json.dps %}\n${code}{{ 'OFF' if ${v} | string == 'off' else 'ON' }}`;
+  } else {
+    config.state_template = "{{ 'ON' }}";
+  }
+
+  if (brightnessDp) {
+    const { code, var: v } = stateFor(entity, brightnessDp);
+    const range = brightnessDp.range || { min: 0, max: 100 };
+    const scaled = `(((${v} | float) - ${Number(range.min)}) * ${255 / (Number(range.max) - Number(range.min) || 1)})`;
+    config.brightness_template = `{% set dps = value_json.dps %}\n${code}{{ ${scaled} | round(0) | int }}`;
+  } else if (rgb) {
+    const spec = formatStruct(rgb);
+    const vField = spec?.fields.find((f) => f.name === "v");
+    if (vField) {
+      const fields = lightFormatFields(entity, rgb, `value_json.dps.get(${lit(String(rgb.id))})`, new Ctx("b"), "{% set dps = value_json.dps %}\n");
+      const actualV = fields?.fields.get("v");
+      if (fields && actualV) {
+        config.brightness_template = `${fields.code}{{ ((${actualV.var} | float) * ${255 / (actualV.max || 255)}) | round(0) | int }}`;
+      }
+    }
+  }
+
+  if (colorTempDp) {
+    config.color_temp_kelvin = true;
+    if (colorTempDp.range) {
+      config.min_kelvin = Math.round(Number(colorTempDp.range.min));
+      config.max_kelvin = Math.round(Number(colorTempDp.range.max));
+    }
+    config.color_temp_template = stateTemplateFull(entity, colorTempDp);
+  }
+
+  if (rgb) {
+    const spec = formatStruct(rgb);
+    const names = new Set(spec?.fields.map((f) => f.name));
+    if (names.has("r") && names.has("g") && names.has("b")) {
+      for (const name of ["r", "g", "b"]) {
+        const template = lightStateColorTemplate(entity, rgb, name);
+        if (template) config[`${name === "r" ? "red" : name === "g" ? "green" : "blue"}_template`] = template;
+      }
+    } else if (names.has("h") && names.has("s") && names.has("v")) {
+      for (const name of ["r", "g", "b"]) {
+        const template = lightStateColorTemplate(entity, rgb, name);
+        if (template) config[`${name === "r" ? "red" : name === "g" ? "green" : "blue"}_template`] = template;
+      }
+    }
+  }
+
+  let effects = [];
+  if (effectDp) {
+    effects = visibleValues(effectDp, { normalize: text });
+    const { code, var: v } = stateFor(entity, effectDp);
+    config.effect_template = `{% set dps = value_json.dps %}\n${code}{{ ${v} | default('') }}`;
+  } else if (colorModeDp) {
+    effects = visibleValues(colorModeDp, { normalize: text }).filter((v) => {
+      const lower = String(v).toLowerCase();
+      return !["onoff", "brightness", "color_temp", "hs", "xy", "rgb", "rgbw", "rgbww", "white"].includes(lower);
+    });
+    if (effects.length) effects.push("off");
+    const { code, var: v } = stateFor(entity, colorModeDp);
+    config.effect_template = `{% set dps = value_json.dps %}\n${code}{{ ${v} if ${v} | string | lower not in ['onoff','brightness','color_temp','hs','xy','rgb','rgbw','rgbww','white'] else 'off' }}`;
+  }
+  if (effects.length) config.effect_list = effects;
+
+  // Commands.
+  const onWrites = [];
+  if (switchDp) onWrites.push({ dp: switchDp, target: "true" });
+
+  let commandCode = `{% set dps = state_attr(${lit(info.rawEntity)}, "dps") or {} %}\n{% set writes = {} %}\n`;
+  const ctx = new Ctx("c");
+  if (brightnessDp) {
+    const range = brightnessDp.range || { min: 0, max: 100 };
+    const expr = `(((${range.min} + (brightness / 255) * ${(Number(range.max) - Number(range.min)) || 1}) | round(0) | int) if brightness is defined and brightness is not none else none)`;
+    commandCode += `{% if brightness is defined and brightness is not none %}\n${emitWriteTo(entity, brightnessDp, expr, ctx, "writes")}{% endif %}\n`;
+  }
+  if (colorTempDp) {
+    commandCode += `{% if color_temp is defined and color_temp is not none %}\n${emitWriteTo(entity, colorTempDp, "color_temp", ctx, "writes")}{% endif %}\n`;
+    if (colorModeDp) {
+      const rawMode = rawForLogical(entity, colorModeDp, "color_temp");
+      if (rawMode !== null) commandCode += `{% if color_temp is defined and color_temp is not none %}{% set _ = writes.update({${lit(String(colorModeDp.id))}: ${lit(rawMode)}}) %}{% endif %}\n`;
+    }
+  }
+  if (rgb) {
+    const spec = formatStruct(rgb);
+    const fields = spec?.fields || [];
+    const fieldMap = new Map(fields.map((f) => [f.name, f]));
+    const fieldsState = lightFormatFields(entity, rgb, `dps.get(${lit(String(rgb.id))})`, ctx, "");
+    if (fieldsState) {
+      // Current field values from the current raw snapshot.
+      commandCode += fieldsState.code;
+      const get = (name) => fieldsState.fields.get(name)?.var;
+      const h = get("h");
+      const s = get("s");
+      const v = get("v");
+      const r = get("r");
+      const g = get("g");
+      const b = get("b");
+      let hsv = null;
+      if (h && s && v) {
+        hsv = { h, s, v };
+      } else if (r && g && b) {
+        const out = ctx.var("hsv");
+        commandCode += emitRgbToHsv(ctx, r, g, b, out);
+        hsv = { h: `${out}h`, s: `${out}s`, v: `${out}v` };
+      }
+      const fieldExprs = [];
+      for (const field of fields) {
+        if (["h", "s", "v"].includes(field.name) && hsv) {
+          const varName = field.name;
+          if (field.name === "h") {
+            commandCode += `{% set ${varName}_cmd = hue if hue is defined and hue is not none else ${hsv.h} %}\n`;
+          } else if (field.name === "s") {
+            commandCode += `{% set ${varName}_cmd = sat if sat is defined and sat is not none else ${hsv.s} %}\n`;
+          } else {
+            commandCode += `{% set ${varName}_cmd = (brightness if brightness is defined and brightness is not none else ${hsv.v}) %}\n`;
+          }
+          fieldExprs.push(formatHaToField(field, `${varName}_cmd`, field.name));
+        } else if (["r", "g", "b"].includes(field.name)) {
+          const varName = field.name;
+          const haVar = field.name === "r" ? "red" : field.name === "g" ? "green" : "blue";
+          commandCode += `{% set ${varName}_cmd = ${haVar} if ${haVar} is defined and ${haVar} is not none else ${fieldsState.fields.get(field.name)?.var || 0} %}\n`;
+          fieldExprs.push(formatHaToField(field, `${varName}_cmd`, field.name));
+        } else {
+          // Preserve other packed fields (switch/white channels) from the
+          // current snapshot.
+          const current = fieldsState.fields.get(field.name)?.var || "0";
+          fieldExprs.push(`(${current} if ${current} is not none else 0)`);
+        }
+      }
+      const packed = formatPackTemplate(entity, rgb, fieldExprs, { ctx });
+      commandCode += packed.code;
+      commandCode += `{% set _ = writes.update({${lit(String(rgb.id))}: ${packed.var}}) %}\n`;
+      if (colorModeDp) {
+        const mode = rawForLogical(entity, colorModeDp, hsv ? "hs" : "rgb");
+        if (mode !== null) commandCode += `{% if (hue is defined and hue is not none) or (red is defined and red is not none) or (green is defined and green is not none) or (blue is defined and blue is not none) %}{% set _ = writes.update({${lit(String(colorModeDp.id))}: ${lit(mode)}}) %}{% endif %}\n`;
+      }
+    }
+  }
+  if (effectDp) {
+    commandCode += `{% if effect is defined and effect is not none and effect != 'off' %}\n${emitWriteTo(entity, effectDp, "effect", ctx, "writes")}{% endif %}\n`;
+  }
+  if (!switchDp && !brightnessDp && effectDp) {
+    commandCode += `{% if brightness is none and color_temp is none and hue is none and red is none and effect is none %}\n`;
+    const raw = rawForLogical(entity, effectDp, visibleValues(effectDp)[0] ?? "on");
+    if (raw !== null) commandCode += `{% set _ = writes.update({${lit(String(effectDp.id))}: ${lit(raw)}}) %}\n`;
+    commandCode += `{% endif %}\n`;
+  }
+  commandCode += "{{ writes | tojson }}";
+  config.command_on_template = commandCode;
+
+  let offCode = `{% set dps = state_attr(${lit(info.rawEntity)}, "dps") or {} %}\n{% set writes = {} %}\n`;
+  if (switchDp) {
+    const raw = rawForLogical(entity, switchDp, false);
+    if (raw !== null) offCode += `{% set _ = writes.update({${lit(String(switchDp.id))}: ${lit(raw)}}) %}\n`;
+  } else if (brightnessDp) {
+    const raw = rawForLogical(entity, brightnessDp, 0);
+    if (raw !== null) offCode += `{% set _ = writes.update({${lit(String(brightnessDp.id))}: ${lit(raw)}}) %}\n`;
+  } else if (effectDp) {
+    const raw = rawForLogical(entity, effectDp, "off");
+    if (raw !== null) offCode += `{% set _ = writes.update({${lit(String(effectDp.id))}: ${lit(raw)}}) %}\n`;
+  }
+  offCode += "{{ writes | tojson }}";
+  config.command_off_template = offCode;
+
+  addAttributes(config, entity, info);
+  return [{ component: "light", object_id: `e${entity.index}`, config }];
+}
+
+// ---------------------------------------------------------------------------
+// Fan
+// ---------------------------------------------------------------------------
+
+function buildFan(entity, info) {
+  const switchDp = use(entity, "switch");
+  const speedDp = use(entity, "speed");
+  const presetDp = use(entity, "preset_mode");
+  const oscillateDp = use(entity, "oscillate");
+  const directionDp = use(entity, "direction");
+  if (!switchDp && !speedDp && !presetDp && !oscillateDp && !directionDp) return [];
+
+  const config = { name: entity.name, state_topic: info.stateTopic, command_topic: info.commandTopic };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+
+  if (switchDp) {
+    config.state_value_template = boolStateTemplate(entity, switchDp);
+    const on = staticFragment(entity, switchDp, true);
+    const off = staticFragment(entity, switchDp, false);
+    if (on) config.payload_on = on;
+    if (off) config.payload_off = off;
+  } else {
+    config.state_value_template = "{{ 'ON' }}";
+    config.payload_on = "{}";
+    config.payload_off = "{}";
+  }
+
+  if (speedDp) {
+    const range = speedDp.range || { min: 0, max: 100, step: 1 };
+    const min = Number(range.min);
+    const max = Number(range.max);
+    const effectiveMin = min === 0 ? 1 : min;
+    config.speed_range_min = effectiveMin;
+    config.speed_range_max = max;
+    const { code, var: v } = stateFor(entity, speedDp);
+    const percentage = `(((${v} | float) - ${effectiveMin}) * ${100 / (max - effectiveMin || 1)})`;
+    config.percentage_state_topic = info.stateTopic;
+    config.percentage_value_template = `{% set dps = value_json.dps %}\n${code}{{ ${percentage} | round(0) | int }}`;
+    config.percentage_command_topic = info.commandTopic;
+    const target = `(${effectiveMin} + (value / 100) * ${(max - effectiveMin) || 1})`;
+    const pctWrites = [{ dp: speedDp, target: `(${target} | round(0) | int)` }];
+    if (switchDp) pctWrites.unshift({ dp: switchDp, target: "true" });
+    config.percentage_command_template = commandForMany(entity, pctWrites, info);
+    config.percentage_step = (Number(range.step || 1) / (max - min || 1)) * 100;
+  }
+
+  if (presetDp) {
+    const presets = visibleValues(presetDp, { normalize: text });
+    if (presets.length) {
+      config.preset_modes = presets;
+      config.preset_mode_state_topic = info.stateTopic;
+      config.preset_mode_value_template = stateTemplateFull(entity, normalizeDp(presetDp, text));
+      config.preset_mode_command_topic = info.commandTopic;
+      config.preset_mode_command_template = commandFor(entity, normalizeDp(presetDp, text), "value", info);
+    }
+  }
+  if (oscillateDp) {
+    config.oscillation_state_topic = info.stateTopic;
+    config.oscillation_value_template = boolStateTemplate(entity, oscillateDp);
+    config.oscillation_command_topic = info.commandTopic;
+    config.oscillation_command_template = commandFor(entity, normalizeDp(oscillateDp, boolValue), "(true if value == 'ON' else false)", info);
+  }
+  if (directionDp) {
+    const directions = visibleValues(directionDp, { normalize: text });
+    if (directions.length) config.direction_list = directions;
+    config.direction_state_topic = info.stateTopic;
+    config.direction_value_template = stateTemplateFull(entity, normalizeDp(directionDp, text));
+    config.direction_command_topic = info.commandTopic;
+    config.direction_command_template = commandFor(entity, normalizeDp(directionDp, text), "value", info);
+  }
+
+  addAttributes(config, entity, info);
+  return [{ component: "fan", object_id: `e${entity.index}`, config }];
+}
+
+// ---------------------------------------------------------------------------
+// Cover
+// ---------------------------------------------------------------------------
+
+function buildCover(entity, info) {
+  const positionDp = use(entity, "position");
+  const currentDp = use(entity, "current_position");
+  const tiltDp = use(entity, "tilt_position");
+  const controlDp = use(entity, "control");
+  const actionDp = use(entity, "action");
+  const openDp = use(entity, "open");
+  if (!positionDp && !currentDp && !tiltDp && !controlDp && !actionDp && !openDp) return [];
+
+  const config = { name: entity.name, state_topic: info.stateTopic, command_topic: info.commandTopic };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+  if (entity.class) config.device_class = entity.class;
+
+  let stateCode = "";
+  let stateExpr = "'open'";
+  if (actionDp) {
+    const { code, var: v } = stateFor(entity, normalizeDp(actionDp, text));
+    stateCode += code;
+    stateExpr = `(${v} | string | lower)`;
+  } else if (currentDp) {
+    const { code, var: v } = stateFor(entity, currentDp);
+    stateCode += code;
+    stateExpr = `('closed' if (${v} | float) < 5 else ('open' if (${v} | float) > 95 else 'open'))`;
+  } else if (openDp) {
+    const { code, var: v } = stateFor(entity, normalizeDp(openDp, boolValue));
+    stateCode += code;
+    stateExpr = `('open' if ${v} else 'closed')`;
+  } else if (controlDp) {
+    const { code, var: v } = stateFor(entity, normalizeDp(controlDp, text));
+    stateCode += code;
+    stateExpr = `('opening' if ${v} | string | lower == 'open' else ('closing' if ${v} | string | lower == 'close' else 'closed'))`;
+  }
+  config.value_template = `{% set dps = value_json.dps %}\n${stateCode}{{ ${stateExpr} }}`;
+
+  if (positionDp) {
+    config.position_topic = info.stateTopic;
+    config.position_template = stateTemplateFull(entity, positionDp);
+    config.set_position_topic = info.commandTopic;
+    config.set_position_template = commandFor(entity, positionDp, "(position | float)", info);
+  } else if (openDp) {
+    config.position_topic = info.stateTopic;
+    config.position_template = stateTemplateFull(entity, normalizeDp(openDp, boolValue), {
+      transform: (v) => `{{ 100 if ${v} else 0 }}`,
+    });
+  }
+  if (tiltDp) {
+    config.tilt_status_topic = info.stateTopic;
+    config.tilt_status_template = stateTemplateFull(entity, tiltDp);
+    config.tilt_command_topic = info.commandTopic;
+    config.tilt_command_template = commandFor(entity, tiltDp, "(tilt_position | float)", info);
+  }
+
+  if (controlDp) {
+    for (const [key, logical] of [["payload_open", "open"], ["payload_close", "close"], ["payload_stop", "stop"]]) {
+      const raw = rawForLogical(entity, controlDp, logical);
+      if (raw !== null) config[key] = JSON.stringify({ [controlDp.id]: raw });
+    }
+  } else if (positionDp) {
+    const openRaw = rawForLogical(entity, positionDp, 100);
+    const closeRaw = rawForLogical(entity, positionDp, 0);
+    if (openRaw !== null) config.payload_open = JSON.stringify({ [positionDp.id]: openRaw });
+    if (closeRaw !== null) config.payload_close = JSON.stringify({ [positionDp.id]: closeRaw });
+  }
+
+  addAttributes(config, entity, info);
+  return [{ component: "cover", object_id: `e${entity.index}`, config }];
+}
+
+// ---------------------------------------------------------------------------
+// Climate / water heater / humidifier
+// ---------------------------------------------------------------------------
+
+function buildClimate(entity, info) {
+  const roles = [
+    "current_temperature", "current_humidity", "temperature", "target_temp_high", "target_temp_low",
+    "hvac_mode", "hvac_action", "fan_mode", "swing_mode", "swing_horizontal_mode", "preset_mode",
+    "humidity", "temperature_unit", "min_temperature", "max_temperature",
+  ];
+  const dp = {};
+  for (const role of roles) dp[role] = use(entity, role);
+  if (!dp.hvac_mode && !dp.temperature && !dp.target_temp_high && !dp.target_temp_low &&
+      !dp.fan_mode && !dp.swing_mode && !dp.preset_mode && !dp.humidity) {
+    return [];
+  }
+
+  const config = { name: entity.name };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+
+  if (dp.current_temperature) {
+    config.current_temperature_topic = info.stateTopic;
+    config.current_temperature_template = stateTemplateFull(entity, dp.current_temperature);
+  }
+  if (dp.current_humidity) {
+    config.current_humidity_topic = info.stateTopic;
+    config.current_humidity_template = stateTemplateFull(entity, dp.current_humidity);
+  }
+  if (dp.temperature) {
+    config.temperature_state_topic = info.stateTopic;
+    config.temperature_state_template = stateTemplateFull(entity, dp.temperature);
+    config.temperature_command_topic = info.commandTopic;
+    config.temperature_command_template = commandFor(entity, dp.temperature, "(value | float)", info);
+    if (dp.temperature.range) {
+      config.min_temp = Number(dp.temperature.range.min);
+      config.max_temp = Number(dp.temperature.range.max);
+      config.temp_step = Number(dp.temperature.range.step || 1);
+    }
+  }
+  for (const [role, low] of [["target_temp_low", true], ["target_temp_high", false]]) {
+    const d = dp[role];
+    if (!d) continue;
+    const prefix = low ? "temperature_low" : "temperature_high";
+    config[`${prefix}_state_topic`] = info.stateTopic;
+    config[`${prefix}_state_template`] = stateTemplateFull(entity, d);
+    config[`${prefix}_command_topic`] = info.commandTopic;
+    config[`${prefix}_command_template`] = commandFor(entity, d, "(value | float)", info);
+    if (d.range) {
+      if (low) config.min_temp = Number(d.range.min);
+      else config.max_temp = Number(d.range.max);
+    }
+  }
+  if (dp.hvac_mode) {
+    let modes = visibleValues(dp.hvac_mode, { normalize: text });
+    if (dp.hvac_mode.rawtype === "boolean") modes = ["off", "heat"];
+    if (modes.length) {
+      config.modes = modes;
+      config.mode_state_topic = info.stateTopic;
+      config.mode_state_template = dp.hvac_mode.rawtype === "boolean"
+        ? stateTemplateFull(entity, normalizeDp(dp.hvac_mode, (v) => (boolValue(v) ? "heat" : "off")))
+        : stateTemplateFull(entity, normalizeDp(dp.hvac_mode, text));
+      config.mode_command_topic = info.commandTopic;
+      config.mode_command_template = dp.hvac_mode.rawtype === "boolean"
+        ? commandFor(entity, normalizeDp(dp.hvac_mode, boolValue), "(value != 'off')", info)
+        : commandFor(entity, normalizeDp(dp.hvac_mode, text), "value", info);
+    }
+  }
+  if (dp.hvac_action) {
+    config.action_topic = info.stateTopic;
+    config.action_template = stateTemplateFull(entity, normalizeDp(dp.hvac_action, text));
+  }
+  for (const [role, prefix] of [["fan_mode", "fan"], ["swing_mode", "swing"], ["swing_horizontal_mode", "swing_horizontal"]]) {
+    const d = dp[role];
+    if (!d) continue;
+    const values = visibleValues(d, { normalize: text });
+    if (values.length) config[`${prefix}_modes`] = values;
+    config[`${prefix}_mode_state_topic`] = info.stateTopic;
+    config[`${prefix}_mode_state_template`] = stateTemplateFull(entity, normalizeDp(d, text));
+    config[`${prefix}_mode_command_topic`] = info.commandTopic;
+    config[`${prefix}_mode_command_template`] = commandFor(entity, normalizeDp(d, text), "value", info);
+  }
+  if (dp.preset_mode) {
+    const values = visibleValues(dp.preset_mode, { normalize: text });
+    if (values.length) config.preset_modes = values;
+    config.preset_mode_state_topic = info.stateTopic;
+    config.preset_mode_state_template = stateTemplateFull(entity, normalizeDp(dp.preset_mode, text));
+    config.preset_mode_command_topic = info.commandTopic;
+    config.preset_mode_command_template = commandFor(entity, normalizeDp(dp.preset_mode, text), "value", info);
+  }
+  if (dp.humidity) {
+    config.target_humidity_state_topic = info.stateTopic;
+    config.target_humidity_state_template = stateTemplateFull(entity, dp.humidity);
+    config.target_humidity_command_topic = info.commandTopic;
+    config.target_humidity_command_template = commandFor(entity, dp.humidity, "(value | float)", info);
+    if (dp.humidity.range) {
+      config.min_humidity = Number(dp.humidity.range.min);
+      config.max_humidity = Number(dp.humidity.range.max);
+    }
+  }
+
+  addAttributes(config, entity, info);
+  return [{ component: "climate", object_id: `e${entity.index}`, config }];
+}
+
+function buildWaterHeater(entity, info) {
+  const temperature = use(entity, "temperature");
+  const current = use(entity, "current_temperature");
+  const mode = use(entity, "operation_mode");
+  const away = use(entity, "away_mode");
+  if (!temperature && !mode && !away) return [];
+  const config = { name: entity.name, mode_state_topic: info.stateTopic, temperature_state_topic: info.stateTopic, current_temperature_topic: info.stateTopic };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+  if (current) config.current_temperature_template = stateTemplateFull(entity, current);
+  if (temperature) {
+    config.temperature_state_template = stateTemplateFull(entity, temperature);
+    config.temperature_command_topic = info.commandTopic;
+    config.temperature_command_template = commandFor(entity, temperature, "(value | float)", info);
+    if (temperature.range) {
+      config.min_temp = Number(temperature.range.min);
+      config.max_temp = Number(temperature.range.max);
+    }
+  }
+  if (mode) {
+    let modes = visibleValues(mode, { normalize: text });
+    if (mode.rawtype === "boolean") modes = ["off", "heat"];
+    if (modes.length) {
+      config.modes = modes;
+      config.mode_state_template = mode.rawtype === "boolean"
+        ? stateTemplateFull(entity, normalizeDp(mode, (v) => (boolValue(v) ? "heat" : "off")))
+        : stateTemplateFull(entity, normalizeDp(mode, text));
+      config.mode_command_topic = info.commandTopic;
+      config.mode_command_template = mode.rawtype === "boolean"
+        ? commandFor(entity, normalizeDp(mode, boolValue), "(value != 'off')", info)
+        : commandFor(entity, normalizeDp(mode, text), "value", info);
+    }
+  }
+  addAttributes(config, entity, info);
+  const items = [{ component: "water_heater", object_id: `e${entity.index}`, config }];
+  if (away && away.rawtype === "boolean") {
+    const awayConfig = {
+      name: `${entity.name} away`,
+      state_topic: info.stateTopic,
+      value_template: boolStateTemplate(entity, away),
+      command_topic: info.commandTopic,
+      command_template: commandFor(entity, normalizeDp(away, boolValue), "(true if value == 'ON' else false)", info),
+      payload_on: "ON",
+      payload_off: "OFF",
+      entity_category: "config",
+    };
+    items.push({ component: "switch", object_id: `e${entity.index}_away`, config: awayConfig });
+  }
+  return items;
+}
+
+function buildHumidifier(entity, info) {
+  const switchDp = use(entity, "switch");
+  const humidity = use(entity, "humidity");
+  const current = use(entity, "current_humidity");
+  const mode = use(entity, "mode");
+  const action = use(entity, "action");
+  if (!switchDp && !humidity && !mode) return [];
+  const config = {
+    name: entity.name,
+    state_topic: info.stateTopic,
+    command_topic: info.commandTopic,
+    target_humidity_command_topic: info.commandTopic,
+  };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+  if (entity.class === "dehumidifier") config.device_class = "dehumidifier";
+  else if (entity.class) config.device_class = entity.class;
+
+  if (switchDp) {
+    config.state_value_template = boolStateTemplate(entity, switchDp);
+    config.command_template = commandFor(entity, normalizeDp(switchDp, boolValue), "(true if value == 'ON' else false)", info);
+    config.payload_on = "ON";
+    config.payload_off = "OFF";
+  } else {
+    config.state_value_template = "{{ 'ON' }}";
+    config.command_template = "{{ {} | tojson }}";
+    config.payload_on = "ON";
+    config.payload_off = "OFF";
+  }
+  if (humidity) {
+    config.target_humidity_state_topic = info.stateTopic;
+    config.target_humidity_state_template = stateTemplateFull(entity, humidity);
+    config.target_humidity_command_template = commandFor(entity, humidity, "(value | float)", info);
+    if (humidity.range) {
+      config.min_humidity = Number(humidity.range.min);
+      config.max_humidity = Number(humidity.range.max);
+    }
+  } else {
+    config.target_humidity_command_template = "{{ {} | tojson }}";
+  }
+  if (current) {
+    config.current_humidity_topic = info.stateTopic;
+    config.current_humidity_template = stateTemplateFull(entity, current);
+  }
+  if (mode) {
+    const values = visibleValues(mode, { normalize: text });
+    if (values.length) config.modes = values;
+    config.mode_state_topic = info.stateTopic;
+    config.mode_state_template = stateTemplateFull(entity, normalizeDp(mode, text));
+    config.mode_command_topic = info.commandTopic;
+    config.mode_command_template = commandFor(entity, normalizeDp(mode, text), "value", info);
+  }
+  if (action) {
+    config.action_topic = info.stateTopic;
+    config.action_template = stateTemplateFull(entity, normalizeDp(action, text));
+  }
+  addAttributes(config, entity, info);
+  return [{ component: "humidifier", object_id: `e${entity.index}`, config }];
+}
+
+// ---------------------------------------------------------------------------
+// Lock / alarm / siren / valve
+// ---------------------------------------------------------------------------
+
+function buildLock(entity, info) {
+  const lock = use(entity, "lock");
+  const lockState = use(entity, "lock_state");
+  const open = use(entity, "open");
+  const jammed = use(entity, "jammed");
+  if (!lock && !lockState && !open && !jammed) return [];
+  const config = { name: entity.name, state_topic: info.stateTopic, command_topic: info.commandTopic };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+
+  let code = "";
+  let expr = "none";
+  if (jammed) {
+    const j = stateFor(entity, normalizeDp(jammed, boolValue));
+    code += j.code;
+    expr = `('JAMMED' if ${j.var} else ${expr})`;
+  }
+  if (open) {
+    const o = stateFor(entity, normalizeDp(open, boolValue));
+    code += o.code;
+    expr = `('OPEN' if ${o.var} else ${expr})`;
+  }
+  if (lockState) {
+    const s = stateFor(entity, normalizeDp(lockState, boolValue));
+    code += s.code;
+    expr = `('LOCKED' if ${s.var} else 'UNLOCKED')`;
+  } else if (lock) {
+    const s = stateFor(entity, normalizeDp(lock, boolValue));
+    code += s.code;
+    expr = `('LOCKED' if ${s.var} else 'UNLOCKED')`;
+  }
+  config.value_template = `{% set dps = value_json.dps %}\n${code}{{ ${expr} }}`;
+  if (lock) {
+    const lockRaw = rawForLogical(entity, lock, true);
+    const unlockRaw = rawForLogical(entity, lock, false);
+    if (lockRaw !== null) config.payload_lock = JSON.stringify({ [lock.id]: lockRaw });
+    if (unlockRaw !== null) config.payload_unlock = JSON.stringify({ [lock.id]: unlockRaw });
+  }
+  if (open) {
+    const openRaw = rawForLogical(entity, open, true);
+    if (openRaw !== null) config.payload_open = JSON.stringify({ [open.id]: openRaw });
+  }
+  addAttributes(config, entity, info);
+  return [{ component: "lock", object_id: `e${entity.index}`, config }];
+}
+
+function buildAlarm(entity, info) {
+  const state = use(entity, "alarm_state");
+  const trigger = use(entity, "trigger");
+  if (!state && !trigger) return [];
+  const config = { name: entity.name, state_topic: info.stateTopic, command_topic: info.commandTopic };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+  config.code_arm_required = false;
+  config.code_disarm_required = false;
+  config.code_trigger_required = false;
+
+  let code = "";
+  let expr = "none";
+  if (trigger) {
+    const t = stateFor(entity, normalizeDp(trigger, boolValue));
+    code += t.code;
+    expr = `('triggered' if ${t.var} else ${expr})`;
+  }
+  if (state) {
+    const s = stateFor(entity, normalizeDp(state, text));
+    code += s.code;
+    expr = `(${s.var} if ${s.var} is not none else ${expr})`;
+  }
+  config.value_template = `{% set dps = value_json.dps %}\n${code}{{ ${expr} }}`;
+
+  const commands = {
+    payload_disarm: "disarmed",
+    payload_arm_home: "armed_home",
+    payload_arm_away: "armed_away",
+    payload_arm_night: "armed_night",
+    payload_arm_vacation: "armed_vacation",
+    payload_arm_custom_bypass: "armed_custom_bypass",
+  };
+  if (state) {
+    for (const [key, logical] of Object.entries(commands)) {
+      const raw = rawForLogical(entity, state, logical);
+      if (raw !== null) config[key] = JSON.stringify({ [state.id]: raw });
+    }
+  }
+  if (trigger) {
+    const raw = rawForLogical(entity, trigger, true);
+    if (raw !== null) config.payload_trigger = JSON.stringify({ [trigger.id]: raw });
+  }
+  addAttributes(config, entity, info);
+  return [{ component: "alarm_control_panel", object_id: `e${entity.index}`, config }];
+}
+
+function buildSiren(entity, info) {
+  const switchDp = use(entity, "switch");
+  const tone = use(entity, "tone");
+  const volume = use(entity, "volume_level");
+  const duration = use(entity, "duration");
+  if (!switchDp && !tone) return [];
+  const config = { name: entity.name, state_topic: info.stateTopic, command_topic: info.commandTopic };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+
+  let code = "";
+  let expr = "none";
+  if (switchDp) {
+    const s = stateFor(entity, normalizeDp(switchDp, boolValue));
+    code += s.code;
+    expr = `('ON' if ${s.var} else 'OFF')`;
+  } else if (tone) {
+    const t = stateFor(entity, tone);
+    code += t.code;
+    expr = `('OFF' if ${t.var} | string == 'off' else 'ON')`;
+  }
+  config.state_value_template = `{% set dps = value_json.dps %}\n${code}{{ ${expr} }}`;
+  config.command_template = commandForMany(entity, [
+    switchDp ? { dp: switchDp, target: "true" } : null,
+    tone ? { dp: tone, target: "tone" } : null,
+    duration ? { dp: duration, target: "duration" } : null,
+    volume ? { dp: volume, target: "volume_level" } : null,
+  ].filter(Boolean), info);
+  if (switchDp) {
+    const off = staticFragment(entity, switchDp, false);
+    if (off) config.command_off_template = off;
+    else config.command_off_template = "{{ {} | tojson }}";
+  } else if (tone) {
+    const off = staticFragment(entity, tone, "off");
+    if (off) config.command_off_template = off;
+  }
+  if (tone) {
+    const tones = visibleValues(tone, { normalize: text }).filter((v) => String(v).toLowerCase() !== "off");
+    if (tones.length) config.available_tones = tones;
+    config.support_duration = Boolean(duration);
+    config.support_volume_set = Boolean(volume);
+  }
+  addAttributes(config, entity, info);
+  return [{ component: "siren", object_id: `e${entity.index}`, config }];
+}
+
+function buildValve(entity, info) {
+  const valve = use(entity, "valve");
+  const switchDp = use(entity, "switch");
+  const current = use(entity, "current_position");
+  if (!valve && !switchDp) return [];
+  const config = { name: entity.name, state_topic: info.stateTopic, command_topic: info.commandTopic };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+  if (entity.class) config.device_class = entity.class;
+
+  const reportsPosition = valve && (valve.rawtype === "integer" || visibleValues(valve).some((v) => typeof v === "number"));
+  config.reports_position = Boolean(reportsPosition);
+  let code = "";
+  let expr = "'closed'";
+  if (current) {
+    const c = stateFor(entity, current);
+    code += c.code;
+    expr = `('closed' if (${c.var} | float) <= 0 else 'open')`;
+  } else if (switchDp) {
+    const s = stateFor(entity, normalizeDp(switchDp, boolValue));
+    code += s.code;
+    expr = `('open' if ${s.var} else 'closed')`;
+  } else if (valve) {
+    const v = stateFor(entity, valve);
+    code += v.code;
+    expr = `('open' if ${v.var} else 'closed')`;
+  }
+  config.value_template = `{% set dps = value_json.dps %}\n${code}{{ ${expr} }}`;
+  if (reportsPosition) {
+    config.set_position_topic = info.commandTopic;
+    config.set_position_template = commandFor(entity, valve, "(position | float)", info);
+  }
+  if (switchDp) {
+    const on = staticFragment(entity, switchDp, true);
+    const off = staticFragment(entity, switchDp, false);
+    if (on) config.payload_open = on;
+    if (off) config.payload_close = off;
+  } else if (reportsPosition) {
+    const openRaw = rawForLogical(entity, valve, 100);
+    const closeRaw = rawForLogical(entity, valve, 0);
+    if (openRaw !== null) config.payload_open = JSON.stringify({ [valve.id]: openRaw });
+    if (closeRaw !== null) config.payload_close = JSON.stringify({ [valve.id]: closeRaw });
+  }
+  addAttributes(config, entity, info);
+  return [{ component: "valve", object_id: `e${entity.index}`, config }];
+}
+
+// ---------------------------------------------------------------------------
+// Event / time / datetime / lawn mower / camera
+// ---------------------------------------------------------------------------
+
+function buildEvent(entity, info) {
+  const event = use(entity, "event");
+  if (!event) return [];
+  const types = visibleValues(event, { normalize: text });
+  const config = {
+    name: entity.name,
+    state_topic: info.stateTopic,
+    event_types: types.length ? types : ["unknown"],
+    value_template: stateTemplateFull(entity, normalizeDp(event, text), {
+      transform: (v) => `{{ {'event_type': ${v}} | tojson }}`,
+    }),
+  };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+  addAttributes(config, entity, info);
+  return [{ component: "event", object_id: `e${entity.index}`, config }];
+}
+
+function buildTime(entity, info) {
+  const hour = use(entity, "hour");
+  const minute = use(entity, "minute");
+  const second = use(entity, "second");
+  const hms = use(entity, "hms");
+  if (!hour && !minute && !second && !hms) return [];
+  const config = { name: entity.name, state_topic: info.stateTopic, command_topic: info.commandTopic };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+
+  if (hms) {
+    config.value_template = stateTemplateFull(entity, hms, { transform: (v) => `{{ ${v} | default('00:00:00') }}` });
+    config.command_template = "{{ {} | tojson }}";
+  } else {
+    let code = "{% set dps = value_json.dps %}\n";
+    const vars = {};
+    for (const [name, dp] of [["h", hour], ["m", minute], ["s", second]]) {
+      if (!dp) continue;
+      const st = stateFor(entity, dp);
+      code += st.code;
+      vars[name] = st.var;
+    }
+    code += `{{ "%02d:%02d:%02d" | format(${vars.h || 0}, ${vars.m || 0}, ${vars.s || 0}) }}`;
+    config.value_template = code;
+    const writes = [];
+    if (hour) writes.push({ dp: hour, target: "(value.hour)" });
+    if (minute) writes.push({ dp: minute, target: "(value.minute)" });
+    else if (hour) writes.length = 0;
+    if (second) writes.push({ dp: second, target: "(value.second)" });
+    if (minute && hour) {
+      config.command_template = commandForMany(entity, writes, info);
+    } else if (hour) {
+      config.command_template = commandForMany(entity, [{ dp: hour, target: "(value.hour * 60 + value.minute)" }], info);
+    } else if (minute) {
+      config.command_template = commandForMany(entity, [{ dp: minute, target: "(value.minute)" }], info);
+    } else {
+      config.command_template = "{{ {} | tojson }}";
+    }
+  }
+  addAttributes(config, entity, info);
+  return [{ component: "time", object_id: `e${entity.index}`, config }];
+}
+
+function buildDatetime(entity, info) {
+  const roles = ["year", "month", "day", "hour", "minute", "second"];
+  const dp = {};
+  for (const role of roles) dp[role] = use(entity, role);
+  if (!roles.some((role) => dp[role])) return [];
+  const config = { name: entity.name, state_topic: info.stateTopic, command_topic: info.commandTopic };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+  const epoch = dp.second && dp.second.rawtype === "unixtime" && !dp.year && !dp.month && !dp.day && !dp.hour && !dp.minute;
+  if (epoch) {
+    config.value_template = stateTemplateFull(entity, dp.second, {
+      transform: (v) => `{{ ${v} | timestamp_custom('%Y-%m-%d %H:%M:%S') }}`,
+    });
+    config.command_template = commandFor(entity, dp.second, "(value | as_timestamp | int)", info);
+  } else {
+    let code = "{% set dps = value_json.dps %}\n";
+    const vars = {};
+    for (const role of roles) {
+      if (!dp[role]) continue;
+      const st = stateFor(entity, dp[role]);
+      code += st.code;
+      vars[role] = st.var;
+    }
+    code += `{{ "%04d-%02d-%02d %02d:%02d:%02d" | format(${vars.year || 1970}, ${vars.month || 1}, ${vars.day || 1}, ${vars.hour || 0}, ${vars.minute || 0}, ${vars.second || 0}) }}`;
+    config.value_template = code;
+    const writes = [];
+    if (dp.year) writes.push({ dp: dp.year, target: "(value.year)" });
+    if (dp.month) writes.push({ dp: dp.month, target: "(value.month)" });
+    if (dp.day) writes.push({ dp: dp.day, target: "(value.day)" });
+    if (dp.hour) writes.push({ dp: dp.hour, target: "(value.hour)" });
+    if (dp.minute) writes.push({ dp: dp.minute, target: "(value.minute)" });
+    if (dp.second) writes.push({ dp: dp.second, target: "(value.second)" });
+    config.command_template = writes.length ? commandForMany(entity, writes, info) : "{{ {} | tojson }}";
+  }
+  addAttributes(config, entity, info);
+  return [{ component: "datetime", object_id: `e${entity.index}`, config }];
+}
+
+function buildLawnMower(entity, info) {
+  const activity = use(entity, "activity");
+  const command = use(entity, "command");
+  if (!activity && !command) return [];
+  const config = { name: entity.name, activity_state_topic: info.stateTopic, command_topic: info.commandTopic };
+  if (entity.category) config.entity_category = entity.category;
+  if (entity.icon) config.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+  if (activity) config.activity_value_template = stateTemplateFull(entity, normalizeDp(activity, text));
+  const values = command ? visibleValues(command, { normalize: text }) : [];
+  for (const [key, value] of [["start_mowing", "start_mowing"], ["pause", "pause"], ["dock", "dock"]]) {
+    if (!command || !values.includes(value)) continue;
+    const raw = rawForLogical(entity, command, value);
+    if (raw === null) continue;
+    config[`${key}_command_topic`] = info.commandTopic;
+    config[`${key}_command_template`] = JSON.stringify({ [command.id]: raw });
+  }
+  addAttributes(config, entity, info);
+  return [{ component: "lawn_mower", object_id: `e${entity.index}`, config }];
+}
+
+function buildCamera(entity, info) {
+  const snapshot = use(entity, "snapshot");
+  const switchDp = use(entity, "switch");
+  const motion = use(entity, "motion_enable");
+  const record = use(entity, "record");
+  const items = [];
+  if (snapshot && (snapshot.rawtype === "base64" || snapshot.rawtype === "utf16b64")) {
+    const config = {
+      name: entity.name,
+      topic: `${info.stateTopic}/${snapshot.id}`,
+      image_encoding: "b64",
+    };
+    if (entity.icon) config.icon = entity.icon;
+    if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+    items.push({ component: "camera", object_id: `e${entity.index}`, config });
+  }
+  if (switchDp) {
+    const cfg = {
+      name: `${entity.name} power`,
+      state_topic: info.stateTopic,
+      value_template: boolStateTemplate(entity, switchDp),
+      command_topic: info.commandTopic,
+      command_template: commandFor(entity, normalizeDp(switchDp, boolValue), "(true if value == 'ON' else false)", info),
+      payload_on: "ON",
+      payload_off: "OFF",
+      entity_category: "config",
+    };
+    items.push({ component: "switch", object_id: `e${entity.index}_power`, config: cfg });
+  }
+  if (motion) {
+    const cfg = {
+      name: `${entity.name} motion detection`,
+      state_topic: info.stateTopic,
+      value_template: boolStateTemplate(entity, motion),
+      command_topic: info.commandTopic,
+      command_template: commandFor(entity, normalizeDp(motion, boolValue), "(true if value == 'ON' else false)", info),
+      payload_on: "ON",
+      payload_off: "OFF",
+      entity_category: "config",
+    };
+    items.push({ component: "switch", object_id: `e${entity.index}_motion`, config: cfg });
+  }
+  if (record) {
+    const cfg = {
+      name: `${entity.name} recording`,
+      state_topic: info.stateTopic,
+      value_template: boolStateTemplate(entity, record),
+      entity_category: "diagnostic",
+    };
+    items.push({ component: "binary_sensor", object_id: `e${entity.index}_record`, config: cfg });
+  }
+  if (!items.length) return [];
+  addAttributes({ ...items[0].config }, entity, info);
+  return items;
+}
+
+// ---------------------------------------------------------------------------
+// Decomposed platforms
+// ---------------------------------------------------------------------------
+
+function buildGenericWritable(entity, dp, info, name, componentHint, category = "config") {
+  if (!dp) return null;
+  const base = {
+    name,
+    state_topic: info.stateTopic,
+    entity_category: category,
+  };
+  if (entity.icon) base.icon = entity.icon;
+  if (entity.hidden || entity.deprecated) base.enabled_by_default = false;
+  if (componentHint === "switch" || dp.rawtype === "boolean") {
+    return {
+      component: "switch",
+      object_id: `e${entity.index}_${slugify(dp.name, 18)}`,
+      config: {
+        ...base,
+        value_template: boolStateTemplate(entity, dp),
+        command_topic: info.commandTopic,
+        command_template: commandFor(entity, normalizeDp(dp, boolValue), "(true if value == 'ON' else false)", info),
+        payload_on: "ON",
+        payload_off: "OFF",
+      },
+    };
+  }
+  if (componentHint === "number" || dp.rawtype === "integer" || dp.rawtype === "float") {
+    return {
+      component: "number",
+      object_id: `e${entity.index}_${slugify(dp.name, 18)}`,
+      config: {
+        ...base,
+        value_template: numberStateTemplate(entity, dp),
+        command_topic: info.commandTopic,
+        command_template: commandFor(entity, normalizeDp(dp, numberValue), "(value | float)", info),
+        min: dp.range?.min ?? 0,
+        max: dp.range?.max ?? 100,
+        step: dp.range?.step ?? 1,
+        mode: "box",
+      },
+    };
+  }
+  if (componentHint === "select" || (dp.mapping.length && visibleValues(dp).length)) {
+    const options = visibleValues(dp, { normalize: text });
+    if (options.length) {
+      return {
+        component: "select",
+        object_id: `e${entity.index}_${slugify(dp.name, 18)}`,
+        config: {
+          ...base,
+          value_template: stateTemplateFull(entity, normalizeDp(dp, text)),
+          command_topic: info.commandTopic,
+          command_template: commandFor(entity, normalizeDp(dp, text), "value", info),
+          options,
+        },
+      };
+    }
+  }
+  return {
+    component: "text",
+    object_id: `e${entity.index}_${slugify(dp.name, 18)}`,
+    config: {
+      ...base,
+      value_template: textStateTemplate(entity, dp),
+      command_topic: info.commandTopic,
+      command_template: commandFor(entity, dp, "value", info),
+    },
+  };
+}
+
+function buildMediaPlayer(entity, info) {
+  const items = [];
+  const state = use(entity, "playback_state");
+  const power = use(entity, "switch");
+  const volume = use(entity, "volume");
+  const mute = use(entity, "mute");
+  const source = use(entity, "source");
+  const play = use(entity, "play");
+  const pause = use(entity, "pause");
+  const stop = use(entity, "stop");
+  const prev = use(entity, "prev");
+  const next = use(entity, "next");
+  const shuffle = use(entity, "shuffle");
+  const repeat = use(entity, "repeat");
+  const seek = use(entity, "seek_position");
+  if (state) {
+    items.push({
+      component: "sensor",
+      object_id: `e${entity.index}_state`,
+      config: { name: `${entity.name} state`, state_topic: info.stateTopic, value_template: stateTemplateFull(entity, normalizeDp(state, text)), icon: "mdi:play-circle" },
+    });
+  }
+  for (const [dp, name, hint] of [
+    [power, "Power", "switch"], [volume, "Volume", "number"], [mute, "Mute", "switch"],
+    [source, "Source", "select"], [shuffle, "Shuffle", "switch"], [repeat, "Repeat", "select"],
+    [seek, "Seek", "number"],
+  ]) {
+    if (!dp) continue;
+    const item = buildGenericWritable(entity, dp, info, `${entity.name} ${name}`, hint);
+    if (item) items.push(item);
+  }
+  for (const [dp, name] of [[play, "Play"], [pause, "Pause"], [stop, "Stop"], [prev, "Previous"], [next, "Next"]]) {
+    if (!dp) continue;
+    const raw = rawForLogical(entity, dp, true);
+    if (raw === null) continue;
+    items.push({
+      component: "button",
+      object_id: `e${entity.index}_${slugify(name, 18)}`,
+      config: { name: `${entity.name} ${name}`, command_topic: info.commandTopic, payload_press: JSON.stringify({ [dp.id]: raw }), entity_category: "config" },
+    });
+  }
+  return items;
+}
+
+function buildRemote(entity, info) {
+  const items = [];
+  const send = use(entity, "send");
+  const receive = use(entity, "receive");
+  const control = use(entity, "control");
+  if (send) {
+    const item = buildGenericWritable(entity, send, info, `${entity.name} send`, "text");
+    if (item) items.push(item);
+  }
+  if (receive) {
+    items.push({
+      component: "sensor",
+      object_id: `e${entity.index}_receive`,
+      config: { name: `${entity.name} received code`, state_topic: info.stateTopic, value_template: textStateTemplate(entity, receive), entity_category: "diagnostic" },
+    });
+  }
+  if (control) {
+    const item = buildGenericWritable(entity, control, info, `${entity.name} control`, "select");
+    if (item) items.push(item);
+  }
+  return items;
+}
+
+function buildInfrared(entity, info) {
+  const send = use(entity, "send");
+  const control = use(entity, "control");
+  const items = [];
+  if (send) {
+    // Emit a text entity carrying the Tuya base64 code. For split-DP devices
+    // the user also gets a control selector below; the code is still exposed.
+    const item = buildGenericWritable(entity, send, info, `${entity.name} code`, "text");
+    if (item) items.push(item);
+  }
+  if (control) {
+    const item = buildGenericWritable(entity, control, info, `${entity.name} control`, "select");
+    if (item) items.push(item);
+  }
+  return items;
+}
+
+// ---------------------------------------------------------------------------
+// Generic entity / DP fallback
+// ---------------------------------------------------------------------------
+
+function genericDpName(entity, dp, used) {
+  let base = dp.name && !["sensor", "value", "switch", "button"].includes(dp.name)
+    ? `${entity.name} ${titleCase(dp.name)}`
+    : entity.name;
+  base = base.slice(0, 31);
+  let name = base;
+  let suffix = 2;
+  while (used.has(name)) {
+    name = `${base.slice(0, 28)} ${suffix}`;
+    suffix += 1;
+  }
+  used.add(name);
+  return name;
+}
+
+function buildGenericEntity(entity, info) {
+  const items = [];
+  const usedNames = new Set();
+  for (const dp of entity.dps) {
+    if (entity.consumed.has(dp.name)) continue;
+    const name = genericDpName(entity, dp, usedNames);
+    const objectId = `e${entity.index}_d${dp.id}`;
+    const config = {
+      name,
+      state_topic: info.stateTopic,
+      entity_category: entity.category || "diagnostic",
+    };
+    if (entity.hidden || entity.deprecated) config.enabled_by_default = false;
+    if (dp.rawtype === "boolean") {
+      config.value_template = boolStateTemplate(entity, dp);
+      config.payload_on = "ON";
+      config.payload_off = "OFF";
+      items.push({ component: "binary_sensor", object_id: objectId, config });
+    } else {
+      const template = stateTemplateFull(entity, dp, { transform: (v) => `{{ ${v} }}` });
+      if (dp.mapping.length) {
+        const options = visibleValues(dp, { normalize: text });
+        if (options.length && options.every((v) => typeof v === "string")) {
+          config.device_class = "enum";
+          config.options = options;
+        }
+      }
+      if (dp.unit) config.unit_of_measurement = dp.unit;
+      if (dp.class && ["measurement", "total", "total_increasing"].includes(dp.class)) config.state_class = dp.class;
+      config.value_template = template;
+      items.push({ component: "sensor", object_id: objectId, config });
+    }
+  }
+  return items;
+}
+
+function buildSimpleEntity(entity, info) {
+  switch (entity.type) {
+    case "sensor": return buildSensor(entity, info);
+    case "binary_sensor": return buildBinarySensor(entity, info);
+    case "switch": return buildSwitch(entity, info);
+    case "number": return buildNumber(entity, info);
+    case "select": return buildSelect(entity, info);
+    case "text": return buildText(entity, info);
+    case "button": return buildButton(entity, info);
+    default: return [];
+  }
+}
+
+function buildNative(entity, info) {
+  if (SIMPLE_ENTITIES.has(entity.type)) return buildSimpleEntity(entity, info);
+  switch (entity.type) {
+    case "light": return buildLight(entity, info);
+    case "fan": return buildFan(entity, info);
+    case "cover": return buildCover(entity, info);
+    case "climate": return buildClimate(entity, info);
+    case "water_heater": return buildWaterHeater(entity, info);
+    case "humidifier": return buildHumidifier(entity, info);
+    case "lock": return buildLock(entity, info);
+    case "alarm_control_panel": return buildAlarm(entity, info);
+    case "siren": return buildSiren(entity, info);
+    case "valve": return buildValve(entity, info);
+    case "event": return buildEvent(entity, info);
+    case "time": return buildTime(entity, info);
+    case "datetime": return buildDatetime(entity, info);
+    case "lawn_mower": return buildLawnMower(entity, info);
+    case "camera": return buildCamera(entity, info);
+    case "media_player": return buildMediaPlayer(entity, info);
+    case "remote": return buildRemote(entity, info);
+    case "infrared": return buildInfrared(entity, info);
+    default: return [];
+  }
 }
 
 export function buildPack(yaml, meta, info) {
@@ -565,61 +1912,101 @@ export function buildPack(yaml, meta, info) {
   const infoSafe = {
     stateTopic: info?.stateTopic || "__STATE_TOPIC__",
     commandTopic: info?.commandTopic || "__CMD_TOPIC__",
+    rawEntity: info?.rawEntity || "__RAW_ENTITY__",
   };
-  const entities = [];
-  const discovery = [];
-  for (let i = 0; i < yaml.entities.length; i += 1) {
-    const rawEntity = yaml.entities[i];
-    if (!isObject(rawEntity)) throw new Error(`entities[${i}] is not an object`);
-    const type = rawEntity.entity;
-    if (!SIMPLE_ENTITIES.has(type)) throw new Error(`unsupported entity type ${type}`);
-    const rawDps = asArray(rawEntity.dps);
-    if (!rawDps.length) throw new Error(`entities[${i}] has no DPs`);
-    const dps = rawDps.map((dp, dpIndex) => parseDp(dp, type, dpIndex, `entities[${i}].dps[${dpIndex}]`));
-    const names = new Set();
-    for (const dp of dps) {
-      if (names.has(dp.name)) throw new Error(`entities[${i}] has duplicate DP name ${dp.name}`);
-      names.add(dp.name);
+  const items = [];
+  const warnings = [];
+  for (let index = 0; index < yaml.entities.length; index += 1) {
+    const raw = yaml.entities[index];
+    if (!isObject(raw)) continue;
+    const entity = parseEntity(raw, index);
+    let native = [];
+    try {
+      native = NATIVE_ENTITIES.has(entity.type) ? buildNative(entity, infoSafe) : [];
+    } catch (error) {
+      warnings.push(`${entity.type}: ${error.message}`);
+      native = [];
     }
-    const primary = dps[0];
-    if (primary.hidden) throw new Error(`entities[${i}] primary DP is hidden`);
-    if (["switch", "number", "select", "button", "text"].includes(type) && primary.readonly) {
-      throw new Error(`entities[${i}] writable entity has readonly primary DP`);
+    if (native.length) {
+      for (const item of native) addItem(items, item.component, item.object_id, item.config);
+    } else {
+      const fallback = buildGenericEntity(entity, infoSafe);
+      for (const item of fallback) addItem(items, item.component, item.object_id, item.config);
     }
-    if (type === "binary_sensor" && primary.type === "string" && !primary.mapping) {
-      throw new Error(`entities[${i}] binary sensor string DP needs a mapping`);
-    }
-    if (type === "button" && primary.type !== "boolean" && !primary.mapping) {
-      throw new Error(`entities[${i}] button needs a press mapping`);
-    }
-    const entity = {
-      type,
-      name: entityName(rawEntity).slice(0, 31),
-      class: text(rawEntity.class),
-      category: text(rawEntity.category),
-      icon: text(rawEntity.icon),
-      hidden: rawEntity.hidden === true,
-      dps,
-    };
-    if (type === "sensor" && entity.class === "enum") {
-      if (!primary.mapping || !primary.mapping.items.some((item) => item.hasFrom)) {
-        throw new Error(`entities[${i}] enum sensor needs a value mapping`);
-      }
-      for (const item of primary.mapping.items) item.to = text(item.to);
-    }
-    entities.push(entity);
-    discovery.push(buildDiscovery(entity, i, infoSafe));
   }
-
-  return {
+  if (!items.length) {
+    // Last-resort fallback: expose every DP as a sensor.
+    for (const raw of yaml.entities) {
+      if (!isObject(raw)) continue;
+      const entity = parseEntity(raw, yaml.entities.indexOf(raw));
+      for (const item of buildGenericEntity(entity, infoSafe)) {
+        addItem(items, item.component, item.object_id, item.config);
+      }
+    }
+  }
+  const pack = {
     format: 1,
     id: slugify(meta?.id || "profile", 23),
     name: text(meta?.name || displayName(yaml)).slice(0, 47),
-    device_type: text(meta?.group || classifyGroup(yaml, meta?.file)),
+    device_type: text(meta?.group || classifyGroup(yaml, meta?.file)).slice(0, 23),
     source: text(meta?.source || "").slice(0, 95),
-    detect: { require: deriveDetect(entities), priority: 5 },
-    discovery,
+    detect: { require: deriveDetectFromRaw(yaml), priority: 5 },
+    discovery: items,
+    warnings,
   };
+  compactPack(pack, 200000);
+  return pack;
+}
+
+function itemPriority(item) {
+  const component = item.component;
+  let priority = 5;
+  if (["light", "fan", "cover", "climate", "water_heater", "humidifier", "lock", "vacuum",
+    "alarm_control_panel", "siren", "valve", "lawn_mower", "camera"].includes(component)) {
+    priority = 10;
+  } else if (["event", "time", "datetime"].includes(component)) {
+    priority = 8;
+  } else if (["switch", "number", "select", "button", "text"].includes(component)) {
+    priority = 7;
+  } else if (component === "binary_sensor" || component === "sensor") {
+    priority = 5;
+  }
+  if (item.config?.entity_category === "diagnostic") priority -= 3;
+  if (item.config?.enabled_by_default === false) priority -= 2;
+  return priority;
+}
+
+function compactPack(pack, maxBytes = 56000) {
+  if (JSON.stringify(pack).length <= maxBytes) return;
+  const original = pack.discovery.length;
+  const candidates = pack.discovery
+    .map((item, index) => ({ item, index, priority: itemPriority(item) }))
+    .sort((a, b) => a.priority - b.priority || b.index - a.index);
+  for (const candidate of candidates) {
+    if (pack.discovery.length <= 1) break;
+    pack.discovery = pack.discovery.filter((item) => item !== candidate.item);
+    if (JSON.stringify(pack).length <= maxBytes) break;
+  }
+  const removed = original - pack.discovery.length;
+  if (removed > 0) {
+    pack.warnings = [
+      ...(pack.warnings || []),
+      `compacted ${removed} lower-priority entities to fit the base pack limit; all DPs remain available in the raw-DP sensor`,
+    ];
+  }
+}
+
+function deriveDetectFromRaw(yaml) {
+  const require = [];
+  for (const entity of asArray(yaml.entities)) {
+    for (const dp of asArray(entity.dps)) {
+      if (dp.optional === true) continue;
+      if (!Number.isInteger(dp.id) || dp.id < 1 || dp.id > 999) continue;
+      if (!require.includes(dp.id)) require.push(dp.id);
+      if (require.length >= 8) return require;
+    }
+  }
+  return require;
 }
 
 export function supportInfo(yaml, meta = {}) {
@@ -627,13 +2014,15 @@ export function supportInfo(yaml, meta = {}) {
     const pack = buildPack(yaml, meta, {
       stateTopic: "__STATE_TOPIC__",
       commandTopic: "__CMD_TOPIC__",
+      rawEntity: "__RAW_ENTITY__",
     });
+    const bytes = JSON.stringify(pack).length;
     return {
       supported: true,
       group: pack.device_type,
       discovery: pack.discovery.length,
-      bytes: JSON.stringify(pack).length,
-      reason: "",
+      bytes,
+      reason: pack.warnings.length ? pack.warnings.slice(0, 2).join("; ") : "",
     };
   } catch (error) {
     return {
@@ -644,8 +2033,4 @@ export function supportInfo(yaml, meta = {}) {
       reason: error.message,
     };
   }
-}
-
-export function groupOrder(groups) {
-  return sortGroups(groups);
 }

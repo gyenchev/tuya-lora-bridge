@@ -300,9 +300,32 @@ legacy outgoing-command overrides: they change the command DP numbers for the
 built-in map but do not change its state decoding. Use a custom profile when both
 directions need different DPs.
 
-### Custom profiles
+### Browser profile catalog (recommended)
 
-Custom profiles are stored as JSON in the base node's NVS under
+Open `/profiles` on the base. The browser loads the tuya-local catalog, converts
+the selected descriptor, and uploads a precompiled pack as NDJSON. The base
+stores metadata plus one discovery file per entity in LittleFS and publishes the
+pack's native Home Assistant discovery configs. All 1,779 current descriptors
+convert; the catalog has no “milestone”/unsupported gate.
+
+Native MQTT platforms cover light, fan, cover, climate, water heater,
+humidifier, lock, vacuum, alarm, siren, valve, event, time/datetime, lawn mower,
+camera, sensor, binary sensor, switch, number, select, button and text. Media
+players, remotes and infrared emitters are decomposed into standard MQTT
+entities. A hidden **Raw DPs** sensor always exposes every DP as an attribute,
+and per-DP topics are published under the raw snapshot topic.
+
+The pack path has no 4-DP/10-entity/32-mapping limits. The current firmware
+accepts uploads up to 250 KB, up to 256 discovery entities and 24 KB per
+discovery item; the largest current descriptor is 181 KB / 81 entities. Pack
+storage uses a custom 384 KB LittleFS partition.
+
+### Legacy custom profiles
+
+The custom JSON editor remains for manual compact profiles. It is no longer the
+recommended path and has the smaller limits below.
+
+Legacy custom profiles are stored as JSON in the base node's NVS under
 `tuya-lora-base/profiles_json`. They are not part of the repository, are not
 published to MQTT, and are cleared by a factory reset.
 
@@ -313,18 +336,18 @@ Limits:
 - profile IDs contain only letters, digits, `_` and `-`, with 1–23 characters;
 - IDs `auto`, `fallback`, `unknown` and the built-in IDs are reserved;
 - invalid JSON is rejected and the previous valid profile set remains active;
-- each profile must define at least one DP in `state` or `entities`;
-- a generic profile can define at most 10 entities, 4 DPs per entity and 32
-  mapping rules.
+- each legacy profile must define at least one DP in `state` or `entities`;
+- a legacy generic profile can define at most 10 entities, 4 DPs per entity and
+  32 mapping rules. These limits do not apply to browser packs.
 
 The editor accepts either a top-level array or an object with a `profiles`
 array.
 
-#### Generic `entities` descriptors
+#### Legacy generic `entities` descriptors
 
-The recommended way to add a new device is a tuya-local-style `entities` list.
-The base translates each descriptor into Home Assistant discovery configs and
-publishes one state topic per entity. Nothing in the firmware is device-specific.
+This is the legacy manual path. Use the browser catalog for new devices. The base
+translates a compact `entities` list into Home Assistant discovery configs and
+publishes one state topic per entity.
 
 Supported entity types:
 
@@ -476,21 +499,12 @@ built-in profiles keep their original entity IDs; generic profiles use
 `tuya_<device-name>_profile_eN` suggested IDs. When commands are disabled in the
 web UI, writable generic entities are published as read-only sensors.
 
-Limitations of the generic subset: no `value_redirect`, `constraint`/
-`conditions`, bitfield sub-field decoding, `base64`/`hex`/`json`/`unixtime` DP
-types, `force`/`persist` handling, `product`-ID matching, or
-climate/light/cover/fan/lock/vacuum entities. Those require richer handling than
-the ESP32 base currently implements. The compact subset is intentionally focused
-on the common sensor/switch/number/select/button/text patterns. A generic state
-object is built from the latest snapshot; DPs missing from that snapshot are not
-persisted. If a descriptor has many enum options, raise the MQTT buffer in the
-base web UI (the default for new settings is 4096 bytes).
-
-A generated library of 104 tuya-local-compatible profiles is in
-[`profiles/`](../profiles/README.md); use
-[`tools/tuya_local_to_profile.py`](../tools/README.md) to regenerate it or try
-more descriptors. The full tuya-local collection contains 1779 descriptors, but
-many use unsupported entity types or exceed the compact limits.
+The legacy manual subset still does not implement the full tuya-local schema.
+Use the browser catalog for `value_redirect`, `constraint`/`conditions`,
+bitfields, packed/base64/hex/json/unixtime DPs, climate/light/cover/fan/lock/
+vacuum and the other native platforms. The browser converter and Jinja mapping
+engine implement those; the raw-DP sensor preserves any DP the native platform
+does not surface separately.
 
 #### Legacy `state`/`control` descriptors
 

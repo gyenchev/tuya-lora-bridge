@@ -10,9 +10,10 @@ discovery configs. No custom integration is required.
 | Topic | Retain | Payload |
 |---|---|---|
 | `tuya-lora/charger/state` | yes | mapped state JSON |
-| `tuya-lora/charger/state/entities/e0` … `e9` | yes | per-entity JSON for generic profiles |
+| `tuya-lora/charger/state/entities/e0` … `e9` | yes | per-entity JSON for legacy custom generic profiles |
 | `tuya-lora/charger/link` | yes | LoRa link diagnostics |
 | `tuya-lora/charger/dps` | yes | raw Tuya DP snapshot |
+| `tuya-lora/charger/dps/<dp-id>` | yes | per-DP value, published in browser-pack mode |
 | `tuya-lora/charger/availability` | yes | `online` / `offline` |
 | `tuya-lora/charger/command/result` | no | command result JSON |
 | `tuya-lora/charger/debug` | no | profile and snapshot summary |
@@ -78,7 +79,8 @@ Profile fields:
 - `profile_selected` is the NVS selection: `auto`, a built-in ID or a custom ID.
 - `profile_detected` is what auto-detection would choose from the last snapshot.
 - `profile_match` is `true` when the active profile matches that snapshot.
-- `profile_entities` is the number of generic entities in the active profile.
+- `profile_entities` is the number of discovery entities in the active browser
+  pack, or the number of generic entities in a legacy custom profile.
 - `profile_error` is present when the active profile is the fallback or a manual
   profile does not match.
 
@@ -87,8 +89,8 @@ Profile tab JSON. The internal `fallback` profile is read-only. Control is
 rejected whenever `profile_match` is false.
 
 `delay_hours` is the last reported delay from the active profile's delay DP (DP
-`104` for single-phase, DP `118` for three-phase, or the custom field). It can be
-`0` when the profile does not expose a delay.
+`104` for single-phase, DP `118` for three-phase, or the legacy custom field).
+It can be `0` when the profile does not expose a delay.
 
 ### Commands published to the base
 
@@ -100,7 +102,8 @@ rejected whenever `profile_match` is false.
 | `tuya-lora/charger/command/current_limit` | number, for example `16` |
 | `tuya-lora/charger/command/delay` | hours, `0`–`15` |
 | `tuya-lora/charger/command/mode` | `charge_now` / `charge_schedule` |
-| `tuya-lora/charger/command/generic/e0` … `e9` | entity-specific value for generic profiles |
+| `tuya-lora/charger/command/dp` | JSON DP fragment from a browser-pack command template |
+| `tuya-lora/charger/command/generic/e0` … `e9` | entity-specific value for legacy custom generic profiles |
 | `tuya-lora/charger/command/query` | any payload; requests a fresh snapshot |
 
 The base maps a command to the detected profile's DP IDs, sends a LoRa
@@ -132,10 +135,33 @@ command is rejected while another command or a snapshot is in progress. The
 remote does not validate DP semantics; it only forwards the fragment to Tuya
 after an authenticated LoRa frame.
 
-### Generic profile entities
+### Browser pack entities
 
-A custom profile with an `entities` list does not use the fixed charger entity
-set above. For each entity the base publishes:
+A browser pack does not use per-entity state topics. It publishes precompiled
+Home Assistant discovery configs; the templates read the raw snapshot at
+`tuya-lora/charger/dps` and command templates publish a JSON `dps` fragment to
+`tuya-lora/charger/command/dp`.
+
+The base also publishes:
+
+- a hidden **Raw DPs** sensor at `sensor.<ha-name>_pack_raw`, with the complete
+  `dps` map in its `dps` attribute;
+- per-DP retained topics under `tuya-lora/charger/dps/<dp-id>`, used by the
+  camera image entity and available to automations.
+
+The object IDs are generated from the pack entity position, with a `pack_`
+prefix. Examples:
+
+```text
+homeassistant/light/tuya_lora_bridge/pack_e0/config
+homeassistant/climate/tuya_lora_bridge/pack_e1/config
+homeassistant/sensor/tuya_lora_bridge/pack_raw/config
+```
+
+### Legacy custom generic entities
+
+A legacy custom profile with an `entities` list still uses per-entity state and
+command topics:
 
 - one discovery config under
   `<discovery-prefix>/<component>/<ha-device-id>/profile_eN/config`;
@@ -147,6 +173,8 @@ set above. For each entity the base publishes:
 as the entity order is unchanged. Suggested entity IDs use
 `tuya_<device-name>_profile_eN`, for example
 `sensor.tuya_charger_profile_e0`. The friendly name comes from the descriptor.
+This path is retained for manual profiles; new devices should use the browser
+catalog.
 
 | Entity type | State | Command payload |
 |---|---|---|
@@ -197,19 +225,20 @@ homeassistant/number/tuya_lora_bridge/current_limit/config
 homeassistant/switch/tuya_lora_bridge/charge_control/config
 ```
 
-Generic profile entities use the same component discovery scheme with
-`profile_eN` object IDs:
+Browser pack entities use `pack_eN` object IDs; legacy custom generic entities
+use `profile_eN`:
 
 ```text
+homeassistant/light/tuya_lora_bridge/pack_e0/config
+homeassistant/climate/tuya_lora_bridge/pack_e1/config
+homeassistant/sensor/tuya_lora_bridge/pack_raw/config
 homeassistant/sensor/tuya_lora_bridge/profile_e0/config
-homeassistant/switch/tuya_lora_bridge/profile_e1/config
-homeassistant/binary_sensor/tuya_lora_bridge/profile_e2/config
 ```
 
 When the active profile changes, the base clears discovery configs for stale
-generic slots and republishes the new set. Legacy built-in discovery topics are
-cleared while a generic profile is active, and restored when a built-in profile
-becomes active again.
+pack/custom slots and republishes the new set. Legacy built-in discovery topics
+are cleared while a pack or custom profile is active, and restored when a
+built-in profile becomes active again.
 
 Common device block:
 

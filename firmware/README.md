@@ -23,16 +23,21 @@ firmware/
 │   ├── config.h
 │   ├── config_store.cpp
 │   ├── config_store.h
+│   ├── browser_profile.cpp
+│   ├── browser_profile.h
 │   ├── entities.cpp
 │   ├── entities.h
 │   ├── ha_discovery.cpp
 │   ├── ha_discovery.h
 │   ├── lora_protocol.cpp
 │   ├── lora_protocol.h
+│   ├── partitions.csv
 │   ├── profiles.cpp
 │   ├── profiles.h
 │   ├── sd_update.cpp
 │   ├── sd_update.h
+│   ├── web_assets.cpp
+│   ├── web_assets.h
 │   ├── web_ui.cpp
 │   └── web_ui.h
 └── remote-node/
@@ -71,19 +76,23 @@ copies synchronized.
 ## Build and flash
 
 ```bash
-FQBN=esp32:esp32:ttgo-lora32:UploadSpeed=460800
+REMOTE_FQBN=esp32:esp32:ttgo-lora32:UploadSpeed=460800
+BASE_FQBN=esp32:esp32:ttgo-lora32:PartitionScheme=min_spiffs,UploadSpeed=460800
 PORT=/dev/cu.usbserial-REPLACE_ME
 LIBS="$HOME/Documents/Arduino/libraries"
 
-arduino-cli compile --fqbn "$FQBN" --libraries "$LIBS" firmware/remote-node
-arduino-cli upload  --fqbn "$FQBN" --libraries "$LIBS" -p "$PORT" firmware/remote-node
+arduino-cli compile --fqbn "$REMOTE_FQBN" --libraries "$LIBS" firmware/remote-node
+arduino-cli upload  --fqbn "$REMOTE_FQBN" --libraries "$LIBS" -p "$PORT" firmware/remote-node
 
-arduino-cli compile --fqbn "$FQBN" --libraries "$LIBS" firmware/base-node
-arduino-cli upload  --fqbn "$FQBN" --libraries "$LIBS" -p "$PORT" firmware/base-node
+arduino-cli compile --fqbn "$BASE_FQBN" --libraries "$LIBS" firmware/base-node
+arduino-cli upload  --fqbn "$BASE_FQBN" --libraries "$LIBS" -p "$PORT" firmware/base-node
 ```
 
 `UploadSpeed=460800` is reliable on the TTGO LoRa32 boards used for this
-project. If upload fails, hold **BOOT**, press **RESET**, release **BOOT**, and
+project. The base sketch contains its own `partitions.csv` (two 1.75 MB OTA app
+partitions and 384 KB LittleFS); it overrides the FQBN partition scheme
+automatically. Back up NVS at `0x9000`/`0x5000` before the first switch to this
+table. If upload fails, hold **BOOT**, press **RESET**, release **BOOT**, and
 retry at a lower speed.
 
 ## First start
@@ -126,7 +135,7 @@ the nodes on trusted networks.
 | Home Assistant | Device name, timezone, discovery prefix and stable device identifier |
 | Timing | Offline timeout, snapshot/chunk timeouts, retry intervals, WiFi/MQTT reconnect intervals and display timings |
 | Control | Command enable, current/delay limits and legacy DP overrides for built-in profiles |
-| Profile | Auto-detect or manual profile selection, live detected/active/match status, and the custom profile JSON editor |
+| Profile | Auto-detect or manual profile selection, live detected/active/match status, a link to the browser profile catalog at `/profiles`, and the legacy custom profile JSON editor |
 | System | Setup AP credentials, web UI port, SD firmware filename and SD update countdown |
 
 ### Remote node settings
@@ -148,18 +157,22 @@ If validation fails, the form reopens on the tab containing the error. The LoRa
 PSK must be identical on both nodes. Changing the device AP SSID or password
 requires re-pairing the Tuya device.
 
-Built-in profiles own both state decoding and command encoding. The DP ID fields
-in the **Control** tab override only the outgoing command DPs for the three
-built-in profiles; the incoming state map remains fixed. Custom profiles can use
-either the compact legacy `state`/`control` map or a tuya-local-style `entities`
-list. Generic entities publish their own Home Assistant discovery, per-entity
-state topics and generic command topics, so future devices do not require
-firmware changes. Invalid custom JSON is rejected without replacing the last
-valid profile set, and the editor keeps the submitted text so it can be
-corrected. A profile selection can only refer to `auto`, a built-in profile or a
-profile in the submitted custom JSON. New custom profile IDs appear in the
-dropdown after saving and rebooting once; select one and save again to make it
-active.
+The browser profile catalog is the primary path for new devices. Open
+`/profiles`, choose a descriptor from the online tuya-local catalog or the
+offline charger catalog, preview it, and save it. The base streams the pack as
+NDJSON and stores metadata plus one small discovery file per entity in
+LittleFS. It supports all tuya-local entity types; native MQTT platforms are
+used where they exist, and media players/remotes/infrared are decomposed into
+standard MQTT entities. A hidden **Raw DPs** sensor exposes every DP as an
+attribute, and the base publishes per-DP topics under the raw snapshot topic.
+
+The three built-in profiles (`3-phase`, `single-phase`, `F-OBZ2`) keep their
+legacy state/control model and stable entity IDs. The **Control** tab DP ID
+fields override only the outgoing command DPs for those built-ins. The legacy
+custom JSON editor remains for compact manual `state`/`control` or `entities`
+profiles; it is limited to four profiles and 8192 bytes and is no longer the
+recommended path. Invalid custom JSON is rejected without replacing the last
+valid profile set.
 
 ### Setup AP recovery
 
@@ -198,22 +211,22 @@ mapping lives on the base node and can be changed without reflashing the remote.
 1. Joins the home WiFi and connects to MQTT. Serves the status page at its
    home-WiFi address and settings at `/settings`.
 2. Publishes retained Home Assistant discovery configs for the selected profile.
-   Built-in profiles use the legacy charger entities; generic profiles publish
-   one config per descriptor entity.
+   Built-in profiles use the legacy charger entities. Browser packs publish the
+   precompiled discovery configs from LittleFS and a hidden Raw DPs sensor.
 3. Listens for LoRa frames using the configured radio settings.
 4. Verifies the AES-GCM tag and rejects duplicate or old sequence numbers per
    remote boot ID.
 5. Sends `DP_QUERY` every 60 seconds, reassembles chunks, and publishes the raw
    snapshot to retained `tuya-lora/charger/dps`.
 6. Detects the DP profile, or uses the manually selected profile, maps it to the
-   legacy state topic and, for generic profiles, to the per-entity state topics,
-   then publishes retained availability.
+   legacy state topic; browser-pack entities read the raw DP snapshot and the
+   Raw DPs sensor attributes, then the base publishes retained availability.
 7. Publishes `tuya-lora/charger/link` on every valid LoRa frame and every
    10 seconds while the remote link is online, so RSSI, SNR and last-seen data
    are available before the device itself is reachable.
-8. Maps legacy MQTT commands and generic entity commands to the active
-   profile's control map, sends `DP_SET`, and publishes the result to
-   `tuya-lora/charger/command/result`.
+8. Maps legacy MQTT commands to the active built-in profile, forwards browser
+   pack command templates through the generic DP command topic, sends `DP_SET`,
+   and publishes the result to `tuya-lora/charger/command/result`.
 9. Rejects control when the active profile is the read-only fallback or when the
    selected profile does not match the last snapshot.
 10. Marks the remote link offline after 10 minutes without a valid frame.

@@ -557,6 +557,23 @@ void publishDpJson() {
   if (dpJsonLen == 0) return;
   if (mqtt.connected()) {
     mqtt.publish(settings.mqttTopicDps, dpJson, true);
+    if (browserProfileSelected()) {
+      JsonDocument perDpDoc;
+      const DeserializationError err = deserializeJson(perDpDoc, dpJson);
+      if (!err && perDpDoc["dps"].is<JsonObject>()) {
+        JsonObject dps = perDpDoc["dps"].as<JsonObject>();
+        for (JsonPair kv : dps) {
+          String topic = String(settings.mqttTopicDps) + "/" + kv.key().c_str();
+          String value;
+          if (kv.value().is<const char *>()) {
+            value = kv.value().as<const char *>();
+          } else {
+            serializeJson(kv.value(), value);
+          }
+          mqtt.publish(topic.c_str(), value.c_str(), true);
+        }
+      }
+    }
   }
   Serial.printf("[dp] raw JSON %u bytes: %s\n", (unsigned)dpJsonLen, dpJson);
 }

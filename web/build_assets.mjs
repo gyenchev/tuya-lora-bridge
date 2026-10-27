@@ -77,7 +77,7 @@ function rawString(name, content) {
   return `R"${delimiter}(${content})${delimiter}"`;
 }
 
-function writeAssets(outDir, firmwareOut, builderHtml, converterJs, offlineJson) {
+function writeAssets(outDir, firmwareOut, builderHtml, converterJs, mappingJs, offlineJson) {
   fs.mkdirSync(firmwareOut, { recursive: true });
   const header = `#pragma once
 
@@ -87,6 +87,7 @@ function writeAssets(outDir, firmwareOut, builderHtml, converterJs, offlineJson)
 namespace tuya_lora {
 extern const char PROFILE_BUILDER_HTML[] PROGMEM;
 extern const char PROFILE_CONVERTER_JS[] PROGMEM;
+extern const char PROFILE_MAPPING_JS[] PROGMEM;
 extern const char OFFLINE_CHARGERS_JSON[] PROGMEM;
 }  // namespace tuya_lora
 `;
@@ -99,6 +100,9 @@ ${rawString("A_HTML", builderHtml)};
 
 const char PROFILE_CONVERTER_JS[] PROGMEM =
 ${rawString("A_JS", converterJs)};
+
+const char PROFILE_MAPPING_JS[] PROGMEM =
+${rawString("A_MAP", mappingJs)};
 
 const char OFFLINE_CHARGERS_JSON[] PROGMEM =
 ${rawString("A_JSON", offlineJson)};
@@ -120,6 +124,7 @@ function main() {
 
   const used = new Set();
   const profiles = [];
+  const offlineCandidates = [];
   const offline = [];
   let parseErrors = 0;
 
@@ -156,13 +161,37 @@ function main() {
         const pack = buildPack(descriptor, meta, {
           stateTopic: "__STATE_TOPIC__",
           commandTopic: "__CMD_TOPIC__",
+          rawEntity: "__RAW_ENTITY__",
         });
         const packed = JSON.stringify(pack);
-        if (packed.length <= 45000) offline.push(pack);
+        if (packed.length <= 45000) offlineCandidates.push(pack);
       } catch {
-        // The catalog already marks it unsupported; skip the offline pack.
+        // The online catalog still exposes the descriptor.
       }
     }
+  }
+
+  const offlinePriority = [
+    "feyree_ev_charger",
+    "zencar_ev_charger",
+    "tary_taac380_evcharger",
+    "adpow_gob6pro_evcharger",
+    "makeskyblue_mppt_charge",
+    "parkside_plgs2012a1_sma",
+  ];
+  offlineCandidates.sort((a, b) => {
+    const ai = offlinePriority.indexOf(a.id);
+    const bi = offlinePriority.indexOf(b.id);
+    if (ai !== -1 || bi !== -1) return (ai === -1 ? 1000 : ai) - (bi === -1 ? 1000 : bi);
+    return a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+  });
+  let offlineBytes = 0;
+  const offlineBudget = 200000;
+  for (const pack of offlineCandidates) {
+    const bytes = JSON.stringify(pack).length;
+    if (offline.length > 0 && offlineBytes + bytes > offlineBudget) continue;
+    offline.push(pack);
+    offlineBytes += bytes;
   }
 
   const order = new Map(groupOrder([...new Set(profiles.map((p) => p.group))]).map((g, i) => [g, i]));
@@ -188,7 +217,8 @@ function main() {
 
   const builderHtml = fs.readFileSync(path.join(__dirname, "profile_builder.html"), "utf8");
   const converterJs = fs.readFileSync(path.join(__dirname, "profile_converter.mjs"), "utf8");
-  writeAssets(args.out, args.firmwareOut, builderHtml, converterJs, offlineJson);
+  const mappingJs = fs.readFileSync(path.join(__dirname, "profile_mapping.mjs"), "utf8");
+  writeAssets(args.out, args.firmwareOut, builderHtml, converterJs, mappingJs, offlineJson);
 
   console.log(`tuya-local commit: ${commit}`);
   console.log(`descriptors: ${files.length}, parse errors: ${parseErrors}`);

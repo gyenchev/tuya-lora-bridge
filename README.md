@@ -54,14 +54,20 @@ The Tuya device stays on its own local protections and schedules.
 - AES-128-GCM encrypted LoRa frames with `boot_id` and sequence replay
   protection.
 - Retained MQTT state, raw DP snapshot, availability and link diagnostics.
-- Descriptor-driven Home Assistant entities: sensors, binary sensors, switches,
-  numbers, selects, buttons and text inputs, with value mappings, scaling,
-  ranges and enum options.
-- Selectable DP profiles with auto-detection, plus up to four custom profiles
-  defined as validated JSON in the base node's NVS.
-- Generated profile library with 104 tuya-local-compatible descriptors plus a
-  converter for generating more from the tuya-local device collection.
-- Built-in Feyree and F-OBZ2 compatibility profiles with stable entity IDs.
+- Browser-side profile catalog covering the complete tuya-local descriptor
+  collection (1,779 devices at the pinned commit), grouped by device type and
+  converted in the browser to precompiled Home Assistant MQTT discovery packs.
+- Native MQTT entities for lights, fans, covers, climate, water heaters,
+  humidifiers, locks, vacuums, alarms, sirens, valves, events, time/datetime,
+  lawn mowers, cameras, sensors, binary sensors, switches, numbers, selects,
+  buttons and text entities. Media players and Tuya remotes/infrared emitters
+  are decomposed into standard MQTT entities.
+- A raw-DP sensor exposes every DP as an attribute, so no DP is hidden even
+  when a platform cannot express it natively.
+- Streaming profile-pack storage (metadata + one small file per discovery
+  entity) in a 384 KB LittleFS partition; no single-JSON pack memory ceiling.
+- Offline charger catalog (15 pre-converted packs) plus the three built-in
+  Feyree and F-OBZ2 fallback profiles with stable entity IDs.
 - Web UI for all runtime settings; settings are stored in ESP32 NVS.
 - OLED status display on both nodes.
 - SD-card firmware updates for both nodes.
@@ -95,21 +101,24 @@ tuya-lora-bridge/
 │   ├── network-and-pairing.md
 │   ├── testing.md
 │   └── tuya-device.md
-├── profiles/
-│   ├── INDEX.md
+├── web/
 │   ├── README.md
-│   ├── pack.jsonl
-│   └── <generated-profile>.json
-├── tools/
-│   ├── README.md
-│   ├── requirements.txt
-│   └── tuya_local_to_profile.py
+│   ├── profile_builder.html
+│   ├── profile_converter.mjs
+│   ├── profile_mapping.mjs
+│   ├── build_assets.mjs
+│   ├── catalog.json
+│   ├── offline_chargers.json
+│   ├── package.json
+│   └── package-lock.json
 └── firmware/
     ├── README.md
     ├── base-node/
     │   ├── base-node.ino
     │   ├── boot_guard.cpp
     │   ├── boot_guard.h
+    │   ├── browser_profile.cpp
+    │   ├── browser_profile.h
     │   ├── config.h
     │   ├── config_store.cpp
     │   ├── config_store.h
@@ -119,10 +128,13 @@ tuya-lora-bridge/
     │   ├── ha_discovery.h
     │   ├── lora_protocol.cpp
     │   ├── lora_protocol.h
+    │   ├── partitions.csv
     │   ├── profiles.cpp
     │   ├── profiles.h
     │   ├── sd_update.cpp
     │   ├── sd_update.h
+    │   ├── web_assets.cpp
+    │   ├── web_assets.h
     │   ├── web_ui.cpp
     │   └── web_ui.h
     └── remote-node/
@@ -151,18 +163,21 @@ identical.
 ### 1. Build and flash
 
 Use Arduino ESP32 core 3.1.0 and the libraries listed in
-[`firmware/README.md`](firmware/README.md).
+[`firmware/README.md`](firmware/README.md). The base sketch contains its own
+`partitions.csv` (two 1.75 MB OTA app partitions and 384 KB LittleFS), so the
+partition scheme selected by the FQBN is overridden by the custom table.
 
 ```bash
-FQBN=esp32:esp32:ttgo-lora32:UploadSpeed=460800
+REMOTE_FQBN=esp32:esp32:ttgo-lora32:UploadSpeed=460800
+BASE_FQBN=esp32:esp32:ttgo-lora32:PartitionScheme=min_spiffs,UploadSpeed=460800
 PORT=/dev/cu.usbserial-REPLACE_ME
 LIBS="$HOME/Documents/Arduino/libraries"
 
-arduino-cli compile --fqbn "$FQBN" --libraries "$LIBS" firmware/remote-node
-arduino-cli upload  --fqbn "$FQBN" --libraries "$LIBS" -p "$PORT" firmware/remote-node
+arduino-cli compile --fqbn "$REMOTE_FQBN" --libraries "$LIBS" firmware/remote-node
+arduino-cli upload  --fqbn "$REMOTE_FQBN" --libraries "$LIBS" -p "$PORT" firmware/remote-node
 
-arduino-cli compile --fqbn "$FQBN" --libraries "$LIBS" firmware/base-node
-arduino-cli upload  --fqbn "$FQBN" --libraries "$LIBS" -p "$PORT" firmware/base-node
+arduino-cli compile --fqbn "$BASE_FQBN" --libraries "$LIBS" firmware/base-node
+arduino-cli upload  --fqbn "$BASE_FQBN" --libraries "$LIBS" -p "$PORT" firmware/base-node
 ```
 
 When a node has no saved configuration, it starts a setup AP:
@@ -320,27 +335,30 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 
 ## Scope and limitations
 
-- The bridge is generic, but the descriptor subset is deliberately compact. It
-  supports `sensor`, `binary_sensor`, `switch`, `number`, `select`, `button` and
-  `text` entities with value mappings, scaling, ranges and enum options. It does
-  not implement the full tuya-local schema: climate, light, cover, fan, lock,
-  vacuum, `value_redirect`, `constraint`/`conditions`, bitfield decoding,
-  `force`/`persist` handling and product-ID matching are not supported yet.
-  Generic state is built from the latest snapshot; absent DPs are not persisted.
-- The built-in `3-phase`, `single-phase` and `F-OBZ2` profiles use a legacy
-  compatibility state model and keep their existing Home Assistant entity IDs.
-  Other devices should use a custom generic `entities` profile.
+- The browser catalog covers all 1,779 descriptors in the pinned tuya-local
+  collection. Every descriptor converts; there is no “milestone”/unsupported
+  status in the catalog.
+- Native MQTT platforms are generated for light, fan, cover, climate,
+  water_heater, humidifier, lock, vacuum, alarm_control_panel, siren, valve,
+  event, time, datetime, lawn_mower, camera, sensor, binary_sensor, switch,
+  number, select, button and text. Media players, Tuya remotes and infrared
+  emitters are decomposed into standard MQTT switch/number/select/button/text/
+  sensor/event entities.
+- The raw-DP sensor is always published in pack mode and exposes every DP as an
+  attribute. All remaining DPs are therefore available even when a platform
+  cannot represent them natively.
+- The built-in `3-phase`, `single-phase` and `F-OBZ2` profiles keep their
+  existing legacy state/control model and Home Assistant entity IDs.
+- Profile packs are uploaded as NDJSON and stored as metadata plus one small
+  file per discovery entity in LittleFS. The base accepts uploads up to 250 KB,
+  up to 256 discovery entities, and 24 KB per discovery item. The custom
+  `partitions.csv` gives LittleFS 384 KB and two 1.75 MB OTA app partitions.
+- The online catalog requires browser internet access (GitHub raw + js-yaml
+  CDN). The offline catalog and the three built-ins work without internet.
+- The legacy custom JSON editor remains for manual compact profiles (four
+  profiles, 8192 bytes); it is no longer the recommended path.
 - One Tuya device is supported per bridge. Simultaneous multi-device support is
   not implemented.
-- A generic profile can define up to 10 entities, 4 DPs per entity and 32 value
-  mapping rules; the custom JSON limit is 8192 bytes.
-- The generated library contains 104 profiles that fit the compact schema. The
-  full tuya-local collection has 1779 descriptors; many use unsupported entity
-  types such as climate, light, fan, cover or lock, or exceed the compact
-  limits.
-- The firmware loads at most four custom profiles in NVS. Generated profiles are
-  pasted one at a time; `profiles/pack.jsonl` is prepared for a future on-device
-  profile-pack loader.
 - Raw DP snapshots are capped at 2560 bytes (32 LoRa chunks of 80 bytes).
 - The base node publishes a full snapshot every 60 seconds. Commands add an
   immediate refresh, but this is not a real-time control link.
@@ -362,8 +380,7 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 | [`docs/home-assistant.md`](docs/home-assistant.md) | MQTT topics, discovery, entities, automations and dashboards |
 | [`docs/hardware-safety.md`](docs/hardware-safety.md) | BOM, power, enclosure, radio rules and EVSE safety |
 | [`docs/testing.md`](docs/testing.md) | Validation matrix, acceptance checks and known limitations |
-| [`profiles/README.md`](profiles/README.md) | Generated tuya-local profile library, coverage and usage |
-| [`tools/README.md`](tools/README.md) | tuya-local YAML to compact profile converter |
+| [`web/README.md`](web/README.md) | Browser profile catalog, converter, catalog generation and offline packs |
 | [`firmware/README.md`](firmware/README.md) | Build, flash, web UI settings, SD updates and board notes |
 
 ## License and disclaimer

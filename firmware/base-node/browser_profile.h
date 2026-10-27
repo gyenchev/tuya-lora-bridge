@@ -13,9 +13,13 @@ const char *browserProfileDeviceType();
 size_t browserProfileDiscoveryCount();
 bool browserProfileSelected();
 bool browserProfileMatches(JsonObject dps);
-bool browserProfileValidateAndSave(const String &json, String &error);
+void browserProfileStreamBegin();
+bool browserProfileStreamFeed(const uint8_t *data, size_t len, String &error);
+bool browserProfileStreamFinish(String &error);
+void browserProfileStreamAbort();
 void browserProfileClearDiscovery();
 void browserProfilePublishDiscovery();
 String browserProfileCommandTopic();
+String browserProfileRawEntityId();
 
 }  // namespace tuya_lora

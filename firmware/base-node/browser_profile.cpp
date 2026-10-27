@@ -3,7 +3,6 @@
 #include <LittleFS.h>
 #include <PubSubClient.h>
 #include <ctype.h>
-#include <functional>
 #include <stdio.h>
 #include <string.h>
 
@@ -17,9 +16,13 @@ namespace tuya_lora {
 
 namespace {
 
-constexpr const char *PACK_PATH = "/profile.json";
-constexpr size_t PACK_MAX_JSON = 49152;
-constexpr size_t PACK_MAX_DISCOVERY = 128;
+constexpr const char *META_PATH = "/profile.meta.json";
+constexpr const char *META_TMP = "/profile.meta.tmp";
+constexpr const char *LEGACY_PATH = "/profile.json";
+constexpr size_t MAX_META_BYTES = 4096;
+constexpr size_t MAX_ITEM_BYTES = 24000;
+constexpr size_t MAX_TOTAL_BYTES = 250000;
+constexpr size_t MAX_ITEMS = 256;
 
 bool loaded = false;
 char packId[24] = {0};
@@ -31,6 +34,7 @@ uint16_t packExclude[8] = {0};
 uint8_t packExcludeCount = 0;
 uint8_t packPriority = 5;
 size_t packDiscoveryCount = 0;
+uint32_t packGeneration = 0;
 
 void copyText(char *dst, size_t dstSize, const char *src) {
   if (!dst || dstSize == 0) return;
@@ -64,20 +68,8 @@ bool safeComponent(const char *text) {
   return true;
 }
 
-bool readPackJson(String &json) {
-  File file = LittleFS.open(PACK_PATH, "r");
-  if (!file) return false;
-  const size_t size = file.size();
-  if (size == 0 || size > PACK_MAX_JSON) {
-    file.close();
-    return false;
-  }
-  json.reserve(size + 1);
-  while (file.available()) {
-    json += static_cast<char>(file.read());
-  }
-  file.close();
-  return json.length() == size;
+String itemPath(uint32_t generation, size_t index) {
+  return String("/p") + generation + "_" + index + ".json";
 }
 
 bool parseDetect(JsonVariant value, uint16_t *require, uint8_t &requireCount,
@@ -92,14 +84,12 @@ bool parseDetect(JsonVariant value, uint16_t *require, uint8_t &requireCount,
     return false;
   }
   JsonObject detect = value.as<JsonObject>();
-
   const long pri = detect["priority"] | 5;
   if (pri < 0 || pri > 255) {
     error = "detect.priority must be 0-255";
     return false;
   }
   priority = static_cast<uint8_t>(pri);
-
   JsonArray req = detect["require"].as<JsonArray>();
   if (!req.isNull()) {
     for (JsonVariant item : req) {
@@ -115,7 +105,6 @@ bool parseDetect(JsonVariant value, uint16_t *require, uint8_t &requireCount,
       require[requireCount++] = static_cast<uint16_t>(dp);
     }
   }
-
   JsonArray ex = detect["exclude"].as<JsonArray>();
   if (!ex.isNull()) {
     for (JsonVariant item : ex) {
@@ -134,29 +123,24 @@ bool parseDetect(JsonVariant value, uint16_t *require, uint8_t &requireCount,
   return true;
 }
 
-bool applyMetadata(const String &json, String &error) {
-  if (json.length() == 0 || json.length() > PACK_MAX_JSON) {
-    error = "profile pack is empty or too large";
-    return false;
-  }
+struct Meta {
+  char id[24] = {0};
+  char name[48] = {0};
+  char type[24] = {0};
+  uint16_t require[8] = {0};
+  uint8_t requireCount = 0;
+  uint16_t exclude[8] = {0};
+  uint8_t excludeCount = 0;
+  uint8_t priority = 5;
+  size_t count = 0;
+  uint32_t generation = 0;
+};
 
-  JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, json);
-  if (err) {
-    error = String("invalid JSON: ") + err.c_str();
-    return false;
-  }
-  if (!doc.is<JsonObject>()) {
-    error = "profile pack must be an object";
-    return false;
-  }
-  JsonObject root = doc.as<JsonObject>();
-
+bool parseMeta(JsonObject root, Meta &meta, bool incoming, String &error) {
   if (!root["format"].is<int>() || root["format"].as<int>() != 1) {
     error = "unsupported profile pack format";
     return false;
   }
-
   const char *id = root["id"] | "";
   const char *name = root["name"] | "";
   const char *type = root["device_type"] | "";
@@ -169,11 +153,11 @@ bool applyMetadata(const String &json, String &error) {
     error = "profile id is reserved";
     return false;
   }
-  if (!name[0] || strlen(name) >= sizeof(packName)) {
+  if (!name[0] || strlen(name) >= sizeof(meta.name)) {
     error = "profile name must be 1-47 characters";
     return false;
   }
-  if (strlen(type) >= sizeof(packType)) {
+  if (strlen(type) >= sizeof(meta.type)) {
     error = "device_type is too long";
     return false;
   }
@@ -181,71 +165,92 @@ bool applyMetadata(const String &json, String &error) {
     error = "profile id is already used by a built-in or custom profile";
     return false;
   }
-
-  JsonArray discovery = root["discovery"].as<JsonArray>();
-  if (discovery.isNull() || discovery.size() == 0 ||
-      discovery.size() > PACK_MAX_DISCOVERY) {
-    error = "discovery must contain 1-128 entries";
+  const long count = root["discovery_count"] | 0;
+  if (count < 1 || count > static_cast<long>(MAX_ITEMS)) {
+    error = "discovery_count must be 1-256";
     return false;
   }
-  for (JsonVariant item : discovery) {
-    if (!item.is<JsonObject>()) {
-      error = "each discovery entry must be an object";
-      return false;
-    }
-    JsonObject entry = item.as<JsonObject>();
-    const char *component = entry["component"] | "";
-    const char *objectId = entry["object_id"] | "";
-    if (!safeComponent(component)) {
-      error = "discovery component is invalid";
-      return false;
-    }
-    if (!safeId(objectId, 31)) {
-      error = "discovery object_id is invalid";
-      return false;
-    }
-    if (!entry["config"].is<JsonObject>()) {
-      error = "discovery config must be an object";
-      return false;
-    }
-  }
-
-  uint16_t require[8] = {0};
-  uint16_t exclude[8] = {0};
-  uint8_t requireCount = 0;
-  uint8_t excludeCount = 0;
-  uint8_t priority = 5;
-  if (!parseDetect(root["detect"], require, requireCount, exclude, excludeCount,
-                   priority, error)) {
+  const long gen = root["generation"] | 0;
+  if (!incoming && (gen < 1 || gen > 0x7fffffffL)) {
+    error = "profile generation is invalid";
     return false;
   }
-
-  copyText(packId, sizeof(packId), id);
-  copyText(packName, sizeof(packName), name);
-  copyText(packType, sizeof(packType), type);
-  memcpy(packRequire, require, sizeof(packRequire));
-  memcpy(packExclude, exclude, sizeof(packExclude));
-  packRequireCount = requireCount;
-  packExcludeCount = excludeCount;
-  packPriority = priority;
-  packDiscoveryCount = discovery.size();
+  if (!parseDetect(root["detect"], meta.require, meta.requireCount,
+                   meta.exclude, meta.excludeCount, meta.priority, error)) {
+    return false;
+  }
+  copyText(meta.id, sizeof(meta.id), id);
+  copyText(meta.name, sizeof(meta.name), name);
+  copyText(meta.type, sizeof(meta.type), type);
+  meta.count = static_cast<size_t>(count);
+  meta.generation = incoming ? 0 : static_cast<uint32_t>(gen);
   return true;
 }
 
-bool loadMetadataFromFile() {
-  loaded = false;
-  String json;
-  if (!readPackJson(json)) return false;
-  String error;
-  if (!applyMetadata(json, error)) {
-    Serial.printf("[pack] invalid %s: %s\n", PACK_PATH, error.c_str());
+void applyMeta(const Meta &meta) {
+  copyText(packId, sizeof(packId), meta.id);
+  copyText(packName, sizeof(packName), meta.name);
+  copyText(packType, sizeof(packType), meta.type);
+  memcpy(packRequire, meta.require, sizeof(packRequire));
+  memcpy(packExclude, meta.exclude, sizeof(packExclude));
+  packRequireCount = meta.requireCount;
+  packExcludeCount = meta.excludeCount;
+  packPriority = meta.priority;
+  packDiscoveryCount = meta.count;
+  packGeneration = meta.generation;
+}
+
+bool readMetaFile(String &json) {
+  File file = LittleFS.open(META_PATH, "r");
+  if (!file) return false;
+  const size_t size = file.size();
+  if (size == 0 || size > MAX_META_BYTES) {
+    file.close();
     return false;
   }
+  json.reserve(size + 1);
+  while (file.available()) json += static_cast<char>(file.read());
+  file.close();
+  return json.length() == size;
+}
+
+bool loadMetaFromFile() {
+  loaded = false;
+  String json;
+  if (!readMetaFile(json)) return false;
+  JsonDocument doc;
+  const DeserializationError err = deserializeJson(doc, json);
+  if (err || !doc.is<JsonObject>()) return false;
+  Meta meta;
+  String error;
+  if (!parseMeta(doc.as<JsonObject>(), meta, false, error)) {
+    Serial.printf("[pack] invalid metadata: %s\n", error.c_str());
+    return false;
+  }
+  if (!LittleFS.exists(itemPath(meta.generation, 0))) {
+    Serial.println("[pack] metadata references missing discovery files");
+    return false;
+  }
+  applyMeta(meta);
   loaded = true;
-  Serial.printf("[pack] loaded '%s' (%u discovery entries, %u bytes)\n", packId,
+  Serial.printf("[pack] loaded '%s' (%u entries, generation %u)\n", packId,
                 static_cast<unsigned>(packDiscoveryCount),
-                static_cast<unsigned>(json.length()));
+                static_cast<unsigned>(packGeneration));
   return true;
+}
+
+bool readItemFile(size_t index, String &json) {
+  File file = LittleFS.open(itemPath(packGeneration, index), "r");
+  if (!file) return false;
+  const size_t size = file.size();
+  if (size == 0 || size > MAX_ITEM_BYTES) {
+    file.close();
+    return false;
+  }
+  json.reserve(size + 1);
+  while (file.available()) json += static_cast<char>(file.read());
+  file.close();
+  return json.length() == size;
 }
 
 bool keyPresent(JsonObject dps, uint16_t dp) {
@@ -269,29 +274,158 @@ String prefixedObjectId(const char *objectId) {
   return String("pack_") + objectId;
 }
 
-bool forEachDiscovery(
-    const String &json,
-    const std::function<bool(const char *, const char *, JsonObject)> &callback,
-    String &error) {
+void removeOldPack() {
+  browserProfileClearDiscovery();
+  if (loaded) {
+    for (size_t i = 0; i < packDiscoveryCount; ++i) {
+      LittleFS.remove(itemPath(packGeneration, i));
+    }
+  }
+  LittleFS.remove(META_PATH);
+  LittleFS.remove(META_TMP);
+  LittleFS.remove(LEGACY_PATH);
+  loaded = false;
+}
+
+bool streamActive = false;
+bool streamMetaParsed = false;
+bool streamFailed = false;
+String streamLine;
+String streamError;
+Meta streamMeta;
+uint32_t streamGeneration = 0;
+size_t streamItemIndex = 0;
+size_t streamTotal = 0;
+
+bool processStreamLine(const String &line, bool &metaParsed, size_t &itemIndex,
+                       Meta &meta, uint32_t &generation, String &error) {
+  if (line.length() == 0) return true;
+  if (!metaParsed) {
+    JsonDocument doc;
+    const DeserializationError err = deserializeJson(doc, line);
+    if (err || !doc.is<JsonObject>()) {
+      error = "invalid profile metadata JSON";
+      return false;
+    }
+    Meta incoming;
+    if (!parseMeta(doc.as<JsonObject>(), incoming, true, error)) return false;
+    generation = packGeneration + 1;
+    removeOldPack();
+    incoming.generation = generation;
+    meta = incoming;
+    metaParsed = true;
+    itemIndex = 0;
+    Serial.printf("[pack] upload '%s' count=%u generation=%u\n", meta.id,
+                  static_cast<unsigned>(meta.count),
+                  static_cast<unsigned>(meta.generation));
+    return true;
+  }
+  if (itemIndex >= meta.count) return true;
   JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, json);
+  const DeserializationError err = deserializeJson(doc, line);
   if (err || !doc.is<JsonObject>()) {
-    error = "profile pack is invalid";
+    error = "invalid discovery JSON";
     return false;
   }
-  JsonArray discovery = doc["discovery"].as<JsonArray>();
-  if (discovery.isNull()) {
-    error = "profile pack has no discovery entries";
+  JsonObject entry = doc.as<JsonObject>();
+  const char *component = entry["component"] | "";
+  const char *objectId = entry["object_id"] | "";
+  if (!safeComponent(component)) {
+    error = "discovery component is invalid";
     return false;
   }
-  for (JsonVariant item : discovery) {
-    JsonObject entry = item.as<JsonObject>();
-    const char *component = entry["component"] | "";
-    const char *objectId = entry["object_id"] | "";
-    JsonObject config = entry["config"].as<JsonObject>();
-    if (!callback(component, objectId, config)) return false;
+  if (!safeId(objectId, 31)) {
+    error = "discovery object_id is invalid";
+    return false;
+  }
+  if (!entry["config"].is<JsonObject>()) {
+    error = "discovery config must be an object";
+    return false;
+  }
+  const String path = itemPath(generation, itemIndex);
+  File file = LittleFS.open(path, "w");
+  if (!file) {
+    error = "could not write discovery file";
+    return false;
+  }
+  const size_t written = file.print(line);
+  file.close();
+  if (written != line.length()) {
+    error = "short write while saving discovery file";
+    return false;
+  }
+  itemIndex += 1;
+  if (itemIndex % 10 == 0) {
+    Serial.printf("[pack] saved %u/%u discovery entries\n",
+                  static_cast<unsigned>(itemIndex),
+                  static_cast<unsigned>(meta.count));
   }
   return true;
+}
+
+bool commitStreamMeta(const Meta &meta, String &error) {
+  JsonDocument out;
+  out["format"] = 1;
+  out["id"] = meta.id;
+  out["name"] = meta.name;
+  out["device_type"] = meta.type;
+  out["discovery_count"] = meta.count;
+  out["generation"] = meta.generation;
+  JsonObject detect = out["detect"].to<JsonObject>();
+  detect["priority"] = meta.priority;
+  JsonArray req = detect["require"].to<JsonArray>();
+  for (uint8_t i = 0; i < meta.requireCount; ++i) req.add(meta.require[i]);
+  JsonArray ex = detect["exclude"].to<JsonArray>();
+  for (uint8_t i = 0; i < meta.excludeCount; ++i) ex.add(meta.exclude[i]);
+
+  String json;
+  serializeJson(out, json);
+  File file = LittleFS.open(META_TMP, "w");
+  if (!file) {
+    error = "could not write profile metadata";
+    return false;
+  }
+  const size_t written = file.print(json);
+  file.close();
+  if (written != json.length() || !LittleFS.rename(META_TMP, META_PATH)) {
+    error = "could not commit profile metadata";
+    return false;
+  }
+  return true;
+}
+
+void cleanupOrphanFiles() {
+  const String keep = loaded ? String("/p") + packGeneration + "_" : String();
+  File root = LittleFS.open("/");
+  if (!root) return;
+  File file = root.openNextFile();
+  while (file) {
+    String name = file.name();
+    if (!name.startsWith("/")) name = String("/") + name;
+    const bool currentItem = loaded && name.startsWith(keep) && name.endsWith(".json");
+    const bool meta = name == META_PATH;
+    if (!currentItem && !meta &&
+        (name.startsWith("/p") || name == LEGACY_PATH || name == META_TMP)) {
+      LittleFS.remove(name);
+    }
+    file = root.openNextFile();
+  }
+  root.close();
+}
+
+void publishRawSensor() {
+  JsonDocument doc;
+  doc["name"] = "Raw DPs";
+  doc["state_topic"] = settings.mqttTopicDps;
+  doc["value_template"] = "{{ value_json.dps | count }}";
+  doc["json_attributes_topic"] = settings.mqttTopicDps;
+  doc["json_attributes_template"] = "{{ {\"dps\": value_json.dps} | tojson }}";
+  doc["entity_category"] = "diagnostic";
+  doc["icon"] = "mdi:code-json";
+  addHaCommon(doc);
+  doc["object_id"] = haObjectId("pack_raw");
+  doc["unique_id"] = String(settings.haDeviceId) + "_pack_raw";
+  publishHaConfig("sensor", "pack_raw", doc);
 }
 
 }  // namespace
@@ -302,7 +436,9 @@ bool browserProfileInit() {
     loaded = false;
     return false;
   }
-  return loadMetadataFromFile();
+  const bool ok = loadMetaFromFile();
+  cleanupOrphanFiles();
+  return ok;
 }
 
 bool browserProfileLoaded() { return loaded; }
@@ -326,79 +462,140 @@ bool browserProfileMatches(JsonObject dps) {
   return loaded && packMatchesDps(dps);
 }
 
-bool browserProfileValidateAndSave(const String &json, String &error) {
-  if (!applyMetadata(json, error)) return false;
+void browserProfileStreamBegin() {
+  streamActive = true;
+  streamMetaParsed = false;
+  streamFailed = false;
+  streamLine = "";
+  streamError = "";
+  streamItemIndex = 0;
+  streamTotal = 0;
+  streamGeneration = packGeneration + 1;
+  memset(&streamMeta, 0, sizeof(streamMeta));
+}
 
-  // Clear the currently published pack before replacing it.
-  browserProfileClearDiscovery();
-
-  File file = LittleFS.open(PACK_PATH, "w");
-  if (!file) {
-    error = "could not open profile storage";
+bool browserProfileStreamFeed(const uint8_t *data, size_t len, String &error) {
+  if (!streamActive || streamFailed) {
+    error = streamError.length() ? streamError : "profile upload is not active";
     return false;
   }
-  const size_t written = file.print(json);
-  file.close();
-  if (written != json.length()) {
-    LittleFS.remove(PACK_PATH);
-    error = "could not write profile pack";
+  streamTotal += len;
+  if (streamTotal > MAX_TOTAL_BYTES) {
+    streamFailed = true;
+    streamError = "profile upload is too large";
+    error = streamError;
     return false;
   }
+  for (size_t i = 0; i < len; ++i) {
+    const char c = static_cast<char>(data[i]);
+    if (c == '\r') continue;
+    if (c == '\n') {
+      if (!processStreamLine(streamLine, streamMetaParsed, streamItemIndex,
+                             streamMeta, streamGeneration, streamError)) {
+        streamFailed = true;
+        error = streamError;
+        return false;
+      }
+      streamLine = "";
+      continue;
+    }
+    if (streamLine.length() >= MAX_ITEM_BYTES) {
+      streamFailed = true;
+      streamError = "profile line is too long";
+      error = streamError;
+      return false;
+    }
+    streamLine += c;
+  }
+  return true;
+}
 
-  if (!loadMetadataFromFile()) {
-    LittleFS.remove(PACK_PATH);
-    error = "saved profile pack failed validation";
+bool browserProfileStreamFinish(String &error) {
+  if (!streamActive || streamFailed) {
+    error = streamError.length() ? streamError : "profile upload is not active";
     return false;
   }
-
+  if (streamLine.length() > 0) {
+    if (!processStreamLine(streamLine, streamMetaParsed, streamItemIndex,
+                           streamMeta, streamGeneration, streamError)) {
+      streamFailed = true;
+      error = streamError;
+      return false;
+    }
+    streamLine = "";
+  }
+  if (!streamMetaParsed) {
+    error = "profile metadata line is missing";
+    return false;
+  }
+  if (streamItemIndex != streamMeta.count) {
+    error = "profile discovery count does not match metadata";
+    return false;
+  }
+  if (!commitStreamMeta(streamMeta, error)) {
+    return false;
+  }
+  applyMeta(streamMeta);
+  loaded = true;
   copyText(settings.profileId, sizeof(settings.profileId), packId);
   if (!saveSettings()) {
     error = "could not save profile selection";
     return false;
   }
+  streamActive = false;
+  Serial.printf("[pack] upload complete: '%s' (%u entries, generation %u)\n",
+                packId, static_cast<unsigned>(packDiscoveryCount),
+                static_cast<unsigned>(packGeneration));
   return true;
+}
+
+void browserProfileStreamAbort() {
+  streamActive = false;
+  streamFailed = true;
+  streamError = "profile upload aborted";
 }
 
 void browserProfileClearDiscovery() {
   if (!loaded) return;
-  String json;
-  if (!readPackJson(json)) return;
-  String error;
-  forEachDiscovery(
-      json,
-      [](const char *component, const char *objectId, JsonObject) {
-        clearHaConfig(component, prefixedObjectId(objectId));
-        return true;
-      },
-      error);
+  clearHaConfig("sensor", "pack_raw");
+  for (size_t i = 0; i < packDiscoveryCount; ++i) {
+    String json;
+    if (!readItemFile(i, json)) continue;
+    JsonDocument doc;
+    if (deserializeJson(doc, json)) continue;
+    JsonObject entry = doc.as<JsonObject>();
+    const char *component = entry["component"] | "";
+    const char *objectId = entry["object_id"] | "";
+    if (component[0] && objectId[0]) {
+      clearHaConfig(component, prefixedObjectId(objectId));
+    }
+  }
 }
 
 void browserProfilePublishDiscovery() {
   if (!loaded || !mqtt.connected()) return;
-  String json;
-  if (!readPackJson(json)) {
-    Serial.println("[pack] could not read profile pack for discovery");
-    return;
-  }
+  for (size_t i = 0; i < packDiscoveryCount; ++i) {
+    String json;
+    if (!readItemFile(i, json)) continue;
+    JsonDocument itemDoc;
+    if (deserializeJson(itemDoc, json)) continue;
+    JsonObject entry = itemDoc.as<JsonObject>();
+    const char *component = entry["component"] | "";
+    const char *objectId = entry["object_id"] | "";
+    JsonObject config = entry["config"].as<JsonObject>();
+    if (!component[0] || !objectId[0] || config.isNull()) continue;
 
-  String error;
-  const bool ok = forEachDiscovery(
-      json,
-      [](const char *component, const char *objectId, JsonObject config) {
-        JsonDocument doc;
-        for (JsonPair kv : config) {
-          doc[kv.key()] = kv.value();
-        }
-        addHaCommon(doc);
-        const String prefixed = prefixedObjectId(objectId);
-        const String unique = String(settings.haDeviceId) + "_" + prefixed +
-                              "_" + component;
-        doc["object_id"] = haObjectId(prefixed.c_str());
-        doc["unique_id"] = unique;
-        return publishHaConfig(component, prefixed, doc);
-      },
-      error);
-  if (!ok) Serial.printf("[pack] discovery failed: %s\n", error.c_str());
+    JsonDocument doc;
+    for (JsonPair kv : config) doc[kv.key()] = kv.value();
+    addHaCommon(doc);
+    const String prefixed = prefixedObjectId(objectId);
+    const String unique = String(settings.haDeviceId) + "_" + prefixed + "_" +
+                          component;
+    doc["object_id"] = haObjectId(prefixed.c_str());
+    doc["unique_id"] = unique;
+    publishHaConfig(component, prefixed, doc);
+  }
+  publishRawSensor();
 }
 
 String browserProfileCommandTopic() {
@@ -406,6 +603,10 @@ String browserProfileCommandTopic() {
   const int slash = base.lastIndexOf('/');
   if (slash > 0) base.remove(slash);
   return base + "/dp";
+}
+
+String browserProfileRawEntityId() {
+  return String("sensor.") + haObjectId("pack_raw");
 }
 
 }  // namespace tuya_lora

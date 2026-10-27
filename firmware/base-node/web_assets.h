@@ -6,5 +6,6 @@
 namespace tuya_lora {
 extern const char PROFILE_BUILDER_HTML[] PROGMEM;
 extern const char PROFILE_CONVERTER_JS[] PROGMEM;
+extern const char PROFILE_MAPPING_JS[] PROGMEM;
 extern const char OFFLINE_CHARGERS_JSON[] PROGMEM;
 }  // namespace tuya_lora

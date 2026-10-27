@@ -49,7 +49,7 @@ to MQTT and Home Assistant.
 - [ ] A custom profile selected manually uses its state and control maps.
 - [ ] Invalid JSON is rejected, the editor keeps the submitted text, and the
   previous valid profiles still load after a reboot.
-- [ ] More than four custom profiles is rejected.
+- [ ] More than four legacy custom profiles is rejected.
 - [ ] JSON larger than 8192 bytes is rejected.
 - [ ] Duplicate, reserved or unsafe profile IDs are rejected.
 - [ ] A generic `entities` profile publishes one discovery config and one state
@@ -63,6 +63,18 @@ to MQTT and Home Assistant.
 - [ ] Factory reset removes custom profiles and returns the selection to `auto`.
 - [ ] Built-in profiles still honor the legacy command DP overrides in the
   Control tab.
+- [ ] `/profiles` loads the online catalog and converts a light, climate,
+  cover, fan, lock, vacuum, valve, event and camera descriptor.
+- [ ] Saving an offline charger pack works without internet.
+- [ ] A large pack (81 entities / ~61 KB) uploads, reboots, reports the expected
+  `profile_entities`, and publishes discovery.
+- [ ] The largest catalog pack (181 KB / 63 entities) uploads and reloads.
+- [ ] The Raw DPs sensor exposes every DP as a `dps` attribute, and per-DP topics
+  are published in pack mode.
+- [ ] A pack-selected device shows `profile_match` and rejects commands when the
+  snapshot does not contain the pack's required DPs.
+- [ ] Switching back to `auto` clears pack discovery and restores the built-in
+  profile.
 - [ ] Home Assistant entity IDs are unchanged after adding profile fields.
 
 ### Control

@@ -127,7 +127,8 @@ function materialize(pack) {
   if (!info) throw new Error('base info is not loaded');
   const text = JSON.stringify(pack)
     .replaceAll('__STATE_TOPIC__', info.state_topic)
-    .replaceAll('__CMD_TOPIC__', info.command_topic);
+    .replaceAll('__CMD_TOPIC__', info.command_topic)
+    .replaceAll('__RAW_ENTITY__', info.raw_entity_id);
   return JSON.parse(text);
 }
 
@@ -138,10 +139,12 @@ function showPreview(pack, sourceLabel) {
     const name = item.config?.name || item.component;
     return `<li><code>${escapeHtml(item.component)}</code> ${escapeHtml(name)}</li>`;
   }).join('');
+  const warnings = (pack.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join('');
   $('preview-body').innerHTML =
     `<p><strong>${escapeHtml(pack.name)}</strong> <span class="badge">${escapeHtml(pack.device_type || 'Device')}</span></p>
      <p class="muted">${escapeHtml(sourceLabel || pack.source || '')}</p>
      <p class="muted">${pack.discovery.length} entities · ${size} bytes</p>
+     ${warnings ? `<p class="muted">Notes:</p><ul>${warnings}</ul>` : ''}
      <ul>${items}</ul>`;
   $('preview').hidden = false;
   $('preview').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -218,10 +221,10 @@ function renderOnline() {
     for (const profile of profiles) {
       details.appendChild(makeItem({
         title: profile.name,
-        subtitle: `${profile.id} · ${profile.file}`,
+        subtitle: `${profile.id} · ${profile.file}${profile.reason ? ` · ${profile.reason}` : ''}`,
         badge: profile.supported
-          ? { label: `milestone 1 · ${profile.discovery} entities`, ok: true }
-          : { label: 'needs later milestone', ok: false },
+          ? { label: `${profile.discovery} entities`, ok: true }
+          : { label: 'conversion error', ok: false },
         disabled: !profile.supported,
         action: async () => {
           try {
@@ -239,8 +242,9 @@ function renderOnline() {
             }, {
               stateTopic: info.state_topic,
               commandTopic: info.command_topic,
+              rawEntity: info.raw_entity_id,
             });
-            if (JSON.stringify(pack).length > 48000) throw new Error('Generated pack is larger than the 48 KB limit');
+            if (JSON.stringify(pack).length > 200000) throw new Error('Generated pack is larger than the 200 KB limit');
             setStatus('');
             showPreview(pack, `Online tuya-local catalog · ${profile.file}`);
           } catch (error) {
@@ -292,13 +296,17 @@ async function loadOnline() {
 async function savePack() {
   if (!currentPack) return;
   try {
-    const packText = JSON.stringify(currentPack);
-    if (packText.length > 48000) throw new Error('Profile pack is larger than the 48 KB limit');
+    const { discovery, ...meta } = currentPack;
+    const body = [
+      JSON.stringify({ ...meta, discovery_count: discovery.length }),
+      ...discovery.map((item) => JSON.stringify(item)),
+    ].join('\n') + '\n';
+    if (body.length > 250000) throw new Error('Profile upload is larger than the 250 KB limit');
     setStatus('Saving profile to the base…');
     const response = await fetch('/api/profile/save', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ pack: packText }),
+      headers: { 'Content-Type': 'application/x-ndjson' },
+      body,
     });
     const data = await response.json().catch(() => null);
     if (!response.ok || !data?.ok) throw new Error(data?.error || `HTTP ${response.status}`);
