@@ -70,46 +70,11 @@ void setDefaults(BaseSettings &s) {
   s.displayOnMs = DISPLAY_ON_MS;
   s.splashMs = SPLASH_MS;
 
-  copyText(s.mqttTopicState, sizeof(s.mqttTopicState), MQTT_TOPIC_STATE);
-  copyText(s.mqttTopicLink, sizeof(s.mqttTopicLink), MQTT_TOPIC_LINK);
-  copyText(s.mqttTopicAvailability, sizeof(s.mqttTopicAvailability),
-           MQTT_TOPIC_AVAILABILITY);
-  copyText(s.mqttTopicResult, sizeof(s.mqttTopicResult), MQTT_TOPIC_RESULT);
-  copyText(s.mqttTopicDebug, sizeof(s.mqttTopicDebug), MQTT_TOPIC_DEBUG);
-  copyText(s.mqttTopicDps, sizeof(s.mqttTopicDps), MQTT_TOPIC_DPS);
-  copyText(s.mqttTopicCmdCharge, sizeof(s.mqttTopicCmdCharge),
-           MQTT_TOPIC_CMD_CHARGE);
-  copyText(s.mqttTopicCmdStart, sizeof(s.mqttTopicCmdStart),
-           MQTT_TOPIC_CMD_START);
-  copyText(s.mqttTopicCmdStop, sizeof(s.mqttTopicCmdStop), MQTT_TOPIC_CMD_STOP);
-  copyText(s.mqttTopicCmdCurrent, sizeof(s.mqttTopicCmdCurrent),
-           MQTT_TOPIC_CMD_CURRENT);
-  copyText(s.mqttTopicCmdDelay, sizeof(s.mqttTopicCmdDelay),
-           MQTT_TOPIC_CMD_DELAY);
-  copyText(s.mqttTopicCmdMode, sizeof(s.mqttTopicCmdMode), MQTT_TOPIC_CMD_MODE);
-  copyText(s.mqttTopicCmdQuery, sizeof(s.mqttTopicCmdQuery),
-           MQTT_TOPIC_CMD_QUERY);
-
   copyText(s.haDiscoveryPrefix, sizeof(s.haDiscoveryPrefix),
            HA_DISCOVERY_PREFIX);
   copyText(s.haDeviceId, sizeof(s.haDeviceId), HA_DEVICE_ID);
 
   s.enableCommands = ENABLE_COMMANDS != 0;
-  copyText(s.profileId, sizeof(s.profileId), DEFAULT_PROFILE_ID);
-  s.minCurrent = CHARGER_MIN_CURRENT;
-  s.maxCurrent = CHARGER_MAX_CURRENT;
-  s.minDelayH = CHARGER_MIN_DELAY_H;
-  s.maxDelayH = CHARGER_MAX_DELAY_H;
-  s.dpSingleChargeId = DP_SINGLE_CHARGE_ID;
-  s.dpSingleCurrentId = DP_SINGLE_CURRENT_ID;
-  s.dpSingleDelayId = DP_SINGLE_DELAY_ID;
-  s.dpSingleModeId = DP_SINGLE_MODE_ID;
-  s.dpThreeChargeId = DP_THREE_CHARGE_ID;
-  s.dpThreeCurrentId = DP_THREE_CURRENT_ID;
-  s.dpThreeDelayId = DP_THREE_DELAY_ID;
-  s.dpThreeModeId = DP_THREE_MODE_ID;
-  s.dpObz2ChargeId = DP_OBZ2_CHARGE_ID;
-  s.dpObz2CurrentId = DP_OBZ2_CURRENT_ID;
 }
 
 void readText(Preferences &prefs, const char *key, char *dst, size_t dstSize) {
@@ -170,79 +135,12 @@ void sanitize(BaseSettings &s) {
   if (s.displayOnMs < 1000) s.displayOnMs = DISPLAY_ON_MS;
   if (s.splashMs > 60000) s.splashMs = SPLASH_MS;
 
-  if (s.profileId[0] == '\0') {
-    copyText(s.profileId, sizeof(s.profileId), DEFAULT_PROFILE_ID);
-  }
-  if (s.minCurrent < 1 || s.minCurrent > 63) {
-    s.minCurrent = CHARGER_MIN_CURRENT;
-  }
-  if (s.maxCurrent < 1 || s.maxCurrent > 63) {
-    s.maxCurrent = CHARGER_MAX_CURRENT;
-  }
-  if (s.minCurrent > s.maxCurrent) {
-    s.minCurrent = CHARGER_MIN_CURRENT;
-    s.maxCurrent = CHARGER_MAX_CURRENT;
-  }
-  if (s.minDelayH > 24) s.minDelayH = CHARGER_MIN_DELAY_H;
-  if (s.maxDelayH > 24) s.maxDelayH = CHARGER_MAX_DELAY_H;
-  if (s.minDelayH > s.maxDelayH) {
-    s.minDelayH = CHARGER_MIN_DELAY_H;
-    s.maxDelayH = CHARGER_MAX_DELAY_H;
-  }
-
   if (s.haDiscoveryPrefix[0] == '\0') {
     copyText(s.haDiscoveryPrefix, sizeof(s.haDiscoveryPrefix),
              HA_DISCOVERY_PREFIX);
   }
   if (s.haDeviceId[0] == '\0') {
     copyText(s.haDeviceId, sizeof(s.haDeviceId), HA_DEVICE_ID);
-  }
-  if (s.mqttTopicState[0] == '\0') {
-    copyText(s.mqttTopicState, sizeof(s.mqttTopicState), MQTT_TOPIC_STATE);
-  }
-  if (s.mqttTopicLink[0] == '\0') {
-    copyText(s.mqttTopicLink, sizeof(s.mqttTopicLink), MQTT_TOPIC_LINK);
-  }
-  if (s.mqttTopicAvailability[0] == '\0') {
-    copyText(s.mqttTopicAvailability, sizeof(s.mqttTopicAvailability),
-             MQTT_TOPIC_AVAILABILITY);
-  }
-  if (s.mqttTopicResult[0] == '\0') {
-    copyText(s.mqttTopicResult, sizeof(s.mqttTopicResult), MQTT_TOPIC_RESULT);
-  }
-  if (s.mqttTopicDebug[0] == '\0') {
-    copyText(s.mqttTopicDebug, sizeof(s.mqttTopicDebug), MQTT_TOPIC_DEBUG);
-  }
-  if (s.mqttTopicDps[0] == '\0') {
-    copyText(s.mqttTopicDps, sizeof(s.mqttTopicDps), MQTT_TOPIC_DPS);
-  }
-  if (s.mqttTopicCmdCharge[0] == '\0') {
-    copyText(s.mqttTopicCmdCharge, sizeof(s.mqttTopicCmdCharge),
-             MQTT_TOPIC_CMD_CHARGE);
-  }
-  if (s.mqttTopicCmdStart[0] == '\0') {
-    copyText(s.mqttTopicCmdStart, sizeof(s.mqttTopicCmdStart),
-             MQTT_TOPIC_CMD_START);
-  }
-  if (s.mqttTopicCmdStop[0] == '\0') {
-    copyText(s.mqttTopicCmdStop, sizeof(s.mqttTopicCmdStop),
-             MQTT_TOPIC_CMD_STOP);
-  }
-  if (s.mqttTopicCmdCurrent[0] == '\0') {
-    copyText(s.mqttTopicCmdCurrent, sizeof(s.mqttTopicCmdCurrent),
-             MQTT_TOPIC_CMD_CURRENT);
-  }
-  if (s.mqttTopicCmdDelay[0] == '\0') {
-    copyText(s.mqttTopicCmdDelay, sizeof(s.mqttTopicCmdDelay),
-             MQTT_TOPIC_CMD_DELAY);
-  }
-  if (s.mqttTopicCmdMode[0] == '\0') {
-    copyText(s.mqttTopicCmdMode, sizeof(s.mqttTopicCmdMode),
-             MQTT_TOPIC_CMD_MODE);
-  }
-  if (s.mqttTopicCmdQuery[0] == '\0') {
-    copyText(s.mqttTopicCmdQuery, sizeof(s.mqttTopicCmdQuery),
-             MQTT_TOPIC_CMD_QUERY);
   }
 }
 
@@ -324,33 +222,6 @@ void loadSettings() {
           prefs.getULong("dsp_on_ms", settings.displayOnMs);
       settings.splashMs = prefs.getULong("splash_ms", settings.splashMs);
 
-      readText(prefs, "t_state", settings.mqttTopicState,
-               sizeof(settings.mqttTopicState));
-      readText(prefs, "t_link", settings.mqttTopicLink,
-               sizeof(settings.mqttTopicLink));
-      readText(prefs, "t_avail", settings.mqttTopicAvailability,
-               sizeof(settings.mqttTopicAvailability));
-      readText(prefs, "t_result", settings.mqttTopicResult,
-               sizeof(settings.mqttTopicResult));
-      readText(prefs, "t_debug", settings.mqttTopicDebug,
-               sizeof(settings.mqttTopicDebug));
-      readText(prefs, "t_dps", settings.mqttTopicDps,
-               sizeof(settings.mqttTopicDps));
-      readText(prefs, "t_c_charge", settings.mqttTopicCmdCharge,
-               sizeof(settings.mqttTopicCmdCharge));
-      readText(prefs, "t_c_start", settings.mqttTopicCmdStart,
-               sizeof(settings.mqttTopicCmdStart));
-      readText(prefs, "t_c_stop", settings.mqttTopicCmdStop,
-               sizeof(settings.mqttTopicCmdStop));
-      readText(prefs, "t_c_curr", settings.mqttTopicCmdCurrent,
-               sizeof(settings.mqttTopicCmdCurrent));
-      readText(prefs, "t_c_delay", settings.mqttTopicCmdDelay,
-               sizeof(settings.mqttTopicCmdDelay));
-      readText(prefs, "t_c_mode", settings.mqttTopicCmdMode,
-               sizeof(settings.mqttTopicCmdMode));
-      readText(prefs, "t_c_query", settings.mqttTopicCmdQuery,
-               sizeof(settings.mqttTopicCmdQuery));
-
       readText(prefs, "ha_prefix", settings.haDiscoveryPrefix,
                sizeof(settings.haDiscoveryPrefix));
       readText(prefs, "ha_dev_id", settings.haDeviceId,
@@ -358,32 +229,6 @@ void loadSettings() {
 
       settings.enableCommands =
           prefs.getBool("cmd_en", settings.enableCommands);
-      readText(prefs, "profile_id", settings.profileId,
-               sizeof(settings.profileId));
-      settings.minCurrent = prefs.getUChar("cur_min", settings.minCurrent);
-      settings.maxCurrent = prefs.getUChar("cur_max", settings.maxCurrent);
-      settings.minDelayH = prefs.getUChar("dly_min", settings.minDelayH);
-      settings.maxDelayH = prefs.getUChar("dly_max", settings.maxDelayH);
-      settings.dpSingleChargeId =
-          prefs.getUShort("dp_s_chg", settings.dpSingleChargeId);
-      settings.dpSingleCurrentId =
-          prefs.getUShort("dp_s_cur", settings.dpSingleCurrentId);
-      settings.dpSingleDelayId =
-          prefs.getUShort("dp_s_dly", settings.dpSingleDelayId);
-      settings.dpSingleModeId =
-          prefs.getUShort("dp_s_mode", settings.dpSingleModeId);
-      settings.dpThreeChargeId =
-          prefs.getUShort("dp_3_chg", settings.dpThreeChargeId);
-      settings.dpThreeCurrentId =
-          prefs.getUShort("dp_3_cur", settings.dpThreeCurrentId);
-      settings.dpThreeDelayId =
-          prefs.getUShort("dp_3_dly", settings.dpThreeDelayId);
-      settings.dpThreeModeId =
-          prefs.getUShort("dp_3_mode", settings.dpThreeModeId);
-      settings.dpObz2ChargeId =
-          prefs.getUShort("dp_o_chg", settings.dpObz2ChargeId);
-      settings.dpObz2CurrentId =
-          prefs.getUShort("dp_o_cur", settings.dpObz2CurrentId);
     }
     prefs.end();
   }
@@ -406,23 +251,8 @@ void loadSettings() {
   settings.loraPsk[sizeof(settings.loraPsk) - 1] = '\0';
   settings.haName[sizeof(settings.haName) - 1] = '\0';
   settings.timezone[sizeof(settings.timezone) - 1] = '\0';
-  settings.mqttTopicState[sizeof(settings.mqttTopicState) - 1] = '\0';
-  settings.mqttTopicLink[sizeof(settings.mqttTopicLink) - 1] = '\0';
-  settings.mqttTopicAvailability[sizeof(settings.mqttTopicAvailability) - 1] =
-      '\0';
-  settings.mqttTopicResult[sizeof(settings.mqttTopicResult) - 1] = '\0';
-  settings.mqttTopicDebug[sizeof(settings.mqttTopicDebug) - 1] = '\0';
-  settings.mqttTopicDps[sizeof(settings.mqttTopicDps) - 1] = '\0';
-  settings.mqttTopicCmdCharge[sizeof(settings.mqttTopicCmdCharge) - 1] = '\0';
-  settings.mqttTopicCmdStart[sizeof(settings.mqttTopicCmdStart) - 1] = '\0';
-  settings.mqttTopicCmdStop[sizeof(settings.mqttTopicCmdStop) - 1] = '\0';
-  settings.mqttTopicCmdCurrent[sizeof(settings.mqttTopicCmdCurrent) - 1] = '\0';
-  settings.mqttTopicCmdDelay[sizeof(settings.mqttTopicCmdDelay) - 1] = '\0';
-  settings.mqttTopicCmdMode[sizeof(settings.mqttTopicCmdMode) - 1] = '\0';
-  settings.mqttTopicCmdQuery[sizeof(settings.mqttTopicCmdQuery) - 1] = '\0';
   settings.haDiscoveryPrefix[sizeof(settings.haDiscoveryPrefix) - 1] = '\0';
   settings.haDeviceId[sizeof(settings.haDeviceId) - 1] = '\0';
-  settings.profileId[sizeof(settings.profileId) - 1] = '\0';
 }
 
 bool saveSettings() {
@@ -475,39 +305,10 @@ bool saveSettings() {
   ok = (prefs.putULong("dsp_on_ms", settings.displayOnMs) > 0) && ok;
   ok = (prefs.putULong("splash_ms", settings.splashMs) > 0) && ok;
 
-  ok = putText(prefs, "t_state", settings.mqttTopicState) && ok;
-  ok = putText(prefs, "t_link", settings.mqttTopicLink) && ok;
-  ok = putText(prefs, "t_avail", settings.mqttTopicAvailability) && ok;
-  ok = putText(prefs, "t_result", settings.mqttTopicResult) && ok;
-  ok = putText(prefs, "t_debug", settings.mqttTopicDebug) && ok;
-  ok = putText(prefs, "t_dps", settings.mqttTopicDps) && ok;
-  ok = putText(prefs, "t_c_charge", settings.mqttTopicCmdCharge) && ok;
-  ok = putText(prefs, "t_c_start", settings.mqttTopicCmdStart) && ok;
-  ok = putText(prefs, "t_c_stop", settings.mqttTopicCmdStop) && ok;
-  ok = putText(prefs, "t_c_curr", settings.mqttTopicCmdCurrent) && ok;
-  ok = putText(prefs, "t_c_delay", settings.mqttTopicCmdDelay) && ok;
-  ok = putText(prefs, "t_c_mode", settings.mqttTopicCmdMode) && ok;
-  ok = putText(prefs, "t_c_query", settings.mqttTopicCmdQuery) && ok;
-
   ok = putText(prefs, "ha_prefix", settings.haDiscoveryPrefix) && ok;
   ok = putText(prefs, "ha_dev_id", settings.haDeviceId) && ok;
 
   ok = (prefs.putBool("cmd_en", settings.enableCommands) > 0) && ok;
-  ok = putText(prefs, "profile_id", settings.profileId) && ok;
-  ok = (prefs.putUChar("cur_min", settings.minCurrent) > 0) && ok;
-  ok = (prefs.putUChar("cur_max", settings.maxCurrent) > 0) && ok;
-  ok = (prefs.putUChar("dly_min", settings.minDelayH) > 0) && ok;
-  ok = (prefs.putUChar("dly_max", settings.maxDelayH) > 0) && ok;
-  ok = (prefs.putUShort("dp_s_chg", settings.dpSingleChargeId) > 0) && ok;
-  ok = (prefs.putUShort("dp_s_cur", settings.dpSingleCurrentId) > 0) && ok;
-  ok = (prefs.putUShort("dp_s_dly", settings.dpSingleDelayId) > 0) && ok;
-  ok = (prefs.putUShort("dp_s_mode", settings.dpSingleModeId) > 0) && ok;
-  ok = (prefs.putUShort("dp_3_chg", settings.dpThreeChargeId) > 0) && ok;
-  ok = (prefs.putUShort("dp_3_cur", settings.dpThreeCurrentId) > 0) && ok;
-  ok = (prefs.putUShort("dp_3_dly", settings.dpThreeDelayId) > 0) && ok;
-  ok = (prefs.putUShort("dp_3_mode", settings.dpThreeModeId) > 0) && ok;
-  ok = (prefs.putUShort("dp_o_chg", settings.dpObz2ChargeId) > 0) && ok;
-  ok = (prefs.putUShort("dp_o_cur", settings.dpObz2CurrentId) > 0) && ok;
 
   if (ok) ok = prefs.putUChar("cfg_ver", CONFIG_VERSION) > 0;
   prefs.end();

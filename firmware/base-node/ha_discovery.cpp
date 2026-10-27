@@ -30,6 +30,23 @@ String haSlug(const char *text) {
   return out;
 }
 
+String mqttTopicPrefix() {
+  String slug = haSlug(settings.haName);
+  if (slug.length() == 0) slug = haSlug(settings.haDeviceId);
+  if (slug.length() == 0) slug = "device";
+  return String("tuya-lora/") + slug;
+}
+
+String mqttTopicState() { return mqttTopicPrefix() + "/state"; }
+String mqttTopicLink() { return mqttTopicPrefix() + "/link"; }
+String mqttTopicAvailability() { return mqttTopicPrefix() + "/availability"; }
+String mqttTopicDps() { return mqttTopicPrefix() + "/dps"; }
+String mqttTopicDebug() { return mqttTopicPrefix() + "/debug"; }
+String mqttTopicCommand(const char *name) {
+  return mqttTopicPrefix() + "/command/" + (name ? name : "");
+}
+String mqttTopicPackCommand() { return mqttTopicCommand("dp"); }
+
 String haEntityPrefix() {
   String name = haSlug(settings.haName);
   if (name.length() == 0) name = "device";
@@ -47,7 +64,7 @@ String haDiscoveryTopic(const String &component, const String &objectId) {
 }
 
 void addHaCommon(JsonDocument &doc) {
-  doc["availability_topic"] = settings.mqttTopicAvailability;
+  doc["availability_topic"] = mqttTopicAvailability();
   doc["payload_available"] = "online";
   doc["payload_not_available"] = "offline";
 

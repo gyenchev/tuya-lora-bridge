@@ -11,10 +11,8 @@ The catalog is generated from a pinned tuya-local checkout:
 
 - [`catalog.json`](catalog.json) — all descriptors, grouped by device type,
   with the pinned tuya-local commit and raw YAML base URL.
-- [`offline_chargers.json`](offline_chargers.json) — pre-converted charger packs
-  served by the base for offline use.
-- `firmware/base-node/web_assets.cpp/.h` — the builder page, converter JS,
-  mapping JS and offline charger JSON embedded in the base firmware.
+- `firmware/base-node/web_assets.cpp/.h` — the profile editor page, converter
+  JS and mapping JS embedded in the base firmware.
 
 At the current pin there are **1,779 descriptors and all 1,779 convert**. There
 is no “milestone”/unsupported gate in the builder.
@@ -23,12 +21,14 @@ is no “milestone”/unsupported gate in the builder.
 
 Open `http://<base-ip>/profiles` from the base UI. The page:
 
-1. loads the offline charger catalog from the base;
+1. loads the active profile from `/api/profile/export` and shows it as editable
+   JSON;
 2. optionally loads the online catalog from GitHub raw and the descriptor YAML
    from the pinned tuya-local commit;
-3. converts the descriptor in the browser;
-4. previews the generated discovery entities;
-5. uploads the pack to `/api/profile/save` as NDJSON.
+3. converts the selected descriptor in the browser into the same profile JSON;
+4. lets you fine-tune the metadata, telemetry and discovery entries in the
+   textarea;
+5. uploads the edited profile to `/api/profile/save` as NDJSON.
 
 The online catalog URL in the builder is a branch/raw URL. For a branch whose
 name contains `/`, use the `refs/heads/` form, for example:
@@ -40,8 +40,8 @@ https://raw.githubusercontent.com/gyenchev/tuya-lora-bridge/refs/heads/feature/d
 The builder default now uses `refs/heads/main`; the catalog can also be pinned
 to a commit for reproducibility.
 
-The converter loads `js-yaml` from jsDelivr for online conversion. Offline
-charger packs are already converted and do not need js-yaml.
+The converter loads `js-yaml` from jsDelivr for online conversion. There is no
+offline catalog; the base stores only the saved profile.
 
 ## Conversion output
 
@@ -54,14 +54,13 @@ Each pack is a list of Home Assistant MQTT discovery entries plus metadata:
   "name": "EV charger",
   "device_type": "Chargers",
   "source": "tuya-local <commit>/feyree_ev_charger.yaml",
-  "detect": { "require": [101, 10, 106], "priority": 5 },
   "discovery": [
     {
       "component": "sensor",
-      "object_id": "e0",
+      "object_id": "status",
       "config": {
         "name": "Status",
-        "state_topic": "tuya-lora/charger/dps",
+        "state_topic": "__STATE_TOPIC__",
         "value_template": "{{ ... }}"
       }
     }
@@ -69,7 +68,13 @@ Each pack is a list of Home Assistant MQTT discovery entries plus metadata:
 }
 ```
 
-The ESP32 adds the device, availability and origin blocks at publish time. It
+Discovery object IDs are semantic slugs derived from the entity name (for
+example `Status` → `status`, `Charge current` → `charge_current`), lowercased
+and separated with underscores. The base prefixes them with `pack_` when
+publishing.
+
+The ESP32 resolves the `__STATE_TOPIC__`, `__CMD_TOPIC__` and `__RAW_ENTITY__`
+tokens at publish time, then adds the device, availability and origin blocks. It
 also publishes a hidden **Raw DPs** sensor whose `dps` attribute contains the
 complete raw DP snapshot. Command templates use that sensor to perform
 conditional mappings, bit masks and packed-value read-modify-write.
@@ -95,7 +100,7 @@ visible in the Raw DPs sensor.
 
 ### Raw-DP sensor
 
-The base always publishes, in pack mode:
+The base always publishes, with an active profile:
 
 - the retained raw snapshot at `state_topic`;
 - one retained per-DP topic at `<state_topic>/<dp-id>` (used by the camera
@@ -107,7 +112,7 @@ The base always publishes, in pack mode:
 
 Packs are uploaded as newline-delimited JSON:
 
-- first line: metadata (`id`, `name`, `device_type`, `detect`,
+- first line: metadata (`id`, `name`, `device_type`, `source`, `telemetry`,
   `discovery_count`);
 - following lines: one discovery item per line.
 
@@ -160,13 +165,9 @@ The script:
 - parses all YAML descriptors with `js-yaml`;
 - classifies device types;
 - builds every profile to compute entity counts and pack sizes;
-- writes `catalog.json` and `offline_chargers.json`;
-- generates `firmware/base-node/web_assets.cpp/.h` with the builder HTML,
-  converter JS, mapping JS and offline catalog.
-
-The offline charger catalog is capped at a total of about 200 KB so the base
-firmware stays within the 1.75 MB app partition. The online catalog still
-contains every charger.
+- writes `catalog.json`;
+- generates `firmware/base-node/web_assets.cpp/.h` with the profile editor HTML,
+  converter JS and mapping JS.
 
 ## Building the base
 

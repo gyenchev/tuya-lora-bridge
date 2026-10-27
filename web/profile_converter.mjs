@@ -364,12 +364,19 @@ function commonEntityConfig(entity, config) {
 let objectCounter = 0;
 
 function addItem(items, component, objectId, config) {
-  const safe = String(objectId).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 31) || `e${objectCounter++}`;
-  let unique = safe;
+  // Prefer a semantic object ID derived from the entity name. The builders use
+  // positional placeholders (e0, e1, ...) plus optional suffixes; those are not
+  // stable or readable in Home Assistant. Keep explicit IDs for any future
+  // non-positional component.
+  const positional = /^e\d+(?:_|$)/.test(String(objectId));
+  const baseId = positional && config?.name
+    ? (slugify(config.name, 31) || `e${objectCounter++}`)
+    : String(objectId).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 31) || `e${objectCounter++}`;
+  let unique = baseId;
   let suffix = 2;
-  while (items.some((item) => item.object_id === unique)) {
+  while (items.some((item) => item.component === component && item.object_id === unique)) {
     const tail = `_${suffix}`;
-    unique = `${safe.slice(0, 31 - tail.length)}${tail}`;
+    unique = `${baseId.slice(0, 31 - tail.length)}${tail}`;
     suffix += 1;
   }
   items.push({ component, object_id: unique, config });
@@ -2055,7 +2062,6 @@ export function buildPack(yaml, meta, info) {
     name: text(meta?.name || displayName(yaml)).slice(0, 47),
     device_type: text(meta?.group || classifyGroup(yaml, meta?.file)).slice(0, 23),
     source: text(meta?.source || "").slice(0, 95),
-    detect: { require: deriveDetect(telemetry, yaml), priority: 5 },
     telemetry,
     discovery: items,
     warnings,
@@ -2317,36 +2323,6 @@ export function buildTelemetry(yaml) {
   return fields;
 }
 
-function deriveDetect(telemetry, yaml) {
-  const preferred = ["status", "voltage_l1", "voltage_l2", "temperature", "energy", "session_energy", "current_l1", "power"];
-  const require = [];
-  for (const key of preferred) {
-    const field = telemetry.find((f) => f.key === key && f.dp);
-    if (!field || require.includes(Number(field.dp))) continue;
-    require.push(Number(field.dp));
-    if (require.length >= 4) return require;
-  }
-  for (const field of telemetry) {
-    if (!field.dp || require.includes(Number(field.dp))) continue;
-    require.push(Number(field.dp));
-    if (require.length >= 4) break;
-  }
-  if (!require.length) return deriveDetectFromRaw(yaml);
-  return require;
-}
-
-function deriveDetectFromRaw(yaml) {
-  const require = [];
-  for (const entity of asArray(yaml.entities)) {
-    for (const dp of asArray(entity.dps)) {
-      if (dp.optional === true) continue;
-      if (!Number.isInteger(dp.id) || dp.id < 1 || dp.id > 999) continue;
-      if (!require.includes(dp.id)) require.push(dp.id);
-      if (require.length >= 8) return require;
-    }
-  }
-  return require;
-}
 
 export function supportInfo(yaml, meta = {}) {
   try {

@@ -87,12 +87,10 @@ size_t dpJsonLen = 0;
 uint32_t dpLastAckMs = 0;
 uint8_t dpAckAttempts = 0;
 
-// The active profile is chosen from the NVS selection (or auto-detected) for
-// every snapshot. The selected profile owns both state decoding and command
-// encoding; the remote node stays a raw DP proxy.
+// The active profile is the single browser pack stored on the base. It owns
+// the Home Assistant entities, telemetry and commands; the remote node stays a
+// raw DP proxy.
 const ProfileDef *activeProfile = nullptr;
-const ProfileDef *detectedProfile = nullptr;
-bool profileMatched = false;
 char profileError[96] = "waiting for DP snapshot";
 char lastDiscoveryProfile[24] = {0};
 int lastDiscoveryMode = -1;
@@ -103,24 +101,13 @@ bool packDiscoveryCleared = false;
 uint8_t lastDelayHours = 0;
 
 const char *profileActiveId() {
-  if (browserProfileSelected()) return browserProfileId();
-  return activeProfile ? activeProfile->id : "unknown";
+  return browserProfileLoaded() ? browserProfileId() : "none";
 }
 
-const char *profileDetectedId() {
-  return detectedProfile ? detectedProfile->id : "unknown";
-}
-
-uint8_t profileEntityCount() {
-  if (browserProfileSelected()) {
-    return static_cast<uint8_t>(browserProfileDiscoveryCount());
-  }
-  const ProfileDef *profile = activeProfile;
-  if (!profile && strcmp(settings.profileId, "auto") != 0) {
-    profile = profileFind(settings.profileId);
-  }
-  if (!profile) profile = detectedProfile;
-  return profile ? profile->genericEntityCount : 0;
+uint16_t profileEntityCount() {
+  return browserProfileLoaded()
+             ? static_cast<uint16_t>(browserProfileDiscoveryCount())
+             : 0;
 }
 
 // Command state. Control is sent as a raw Tuya "dps" JSON fragment, so the
@@ -315,17 +302,11 @@ void drawScreen() {
   }
 
   display.print("Device: ");
-  if (!haveState) {
-    display.println("unknown");
-  } else if (!profileMatched) {
-    display.println("mismatch");
-  } else {
-    display.println("available");
-  }
+  display.println(haveState ? "available" : "unknown");
 
   display.print("Profile: ");
-  String profileLabel = browserProfileSelected() ? String(browserProfileName())
-                                                  : String(profileActiveId());
+  String profileLabel = browserProfileLoaded() ? String(browserProfileName())
+                                               : String("none");
   if (profileLabel.length() > 13) profileLabel = profileLabel.substring(0, 13);
   display.println(profileLabel);
 
@@ -560,14 +541,14 @@ void sendDpAck() {
 void publishDpJson() {
   if (dpJsonLen == 0) return;
   if (mqtt.connected()) {
-    mqtt.publish(settings.mqttTopicDps, dpJson, true);
+    mqtt.publish(mqttTopicDps().c_str(), dpJson, true);
     if (browserProfileSelected()) {
       JsonDocument perDpDoc;
       const DeserializationError err = deserializeJson(perDpDoc, dpJson);
       if (!err && perDpDoc["dps"].is<JsonObject>()) {
         JsonObject dps = perDpDoc["dps"].as<JsonObject>();
         for (JsonPair kv : dps) {
-          String topic = String(settings.mqttTopicDps) + "/" + kv.key().c_str();
+          String topic = String(mqttTopicDps()) + "/" + kv.key().c_str();
           String value;
           if (kv.value().is<const char *>()) {
             value = kv.value().as<const char *>();
@@ -894,97 +875,45 @@ void applyDpJson() {
     return;
   }
 
-  detectedProfile = profileAutoDetect(dps);
-  const bool packMode = browserProfileSelected();
-  const bool autoMode = !packMode && strcmp(settings.profileId, "auto") == 0;
-  const ProfileDef *selected =
-      (packMode || autoMode) ? nullptr : profileFind(settings.profileId);
-
   StatusData st;
   uint8_t delayHours = 0;
-
-  if (packMode) {
-    activeProfile = nullptr;
-    profileMatched = browserProfileMatches(dps);
-    if (profileMatched) {
-      profileError[0] = '\0';
-    } else {
-      snprintf(profileError, sizeof(profileError),
-               "selected browser pack '%s' does not match this DP snapshot",
-               browserProfileId());
-    }
-    applyProfileState(dps, *profilesFallback(), st, delayHours);
-  } else if (autoMode) {
-    activeProfile = detectedProfile ? detectedProfile : profilesFallback();
-    profileMatched = activeProfile != profilesFallback();
-    if (profileMatched) {
-      profileError[0] = '\0';
-    } else {
-      snprintf(profileError, sizeof(profileError),
-               "no built-in or custom profile matched this DP snapshot");
-    }
-    applyProfileState(dps, *activeProfile, st, delayHours);
-  } else if (selected) {
-    activeProfile = selected;
-    profileMatched = profileMatches(*selected, dps);
-    if (profileMatched) {
-      profileError[0] = '\0';
-    } else {
-      snprintf(profileError, sizeof(profileError),
-               "selected profile '%s' does not match this DP snapshot",
-               selected->id);
-    }
-    applyProfileState(dps, *activeProfile, st, delayHours);
+  activeProfile = profilesFallback();
+  applyProfileState(dps, *activeProfile, st, delayHours);
+  if (!browserProfileLoaded()) {
+    snprintf(profileError, sizeof(profileError), "no profile loaded");
   } else {
-    activeProfile = profilesFallback();
-    profileMatched = false;
-    snprintf(profileError, sizeof(profileError),
-             "selected profile '%s' is not loaded", settings.profileId);
-    applyProfileState(dps, *activeProfile, st, delayHours);
+    profileError[0] = '\0';
   }
-  if (!packMode && !activeProfile) activeProfile = profilesFallback();
 
   lastDelayHours = delayHours;
   lastStatus = st;
   haveState = true;
 
   if (mqtt.connected()) {
-    const int mode =
-        packMode ? 2
-                 : (activeProfile && activeProfile->hasGenericEntities() ? 1 : 0);
-    const char *activeId =
-        packMode ? browserProfileId()
-                 : (activeProfile ? activeProfile->id : "fallback");
+    const bool loaded = browserProfileLoaded();
+    const char *activeId = loaded ? browserProfileId() : "none";
     const bool discoveryChanged =
-        !discoveryInitialized || strcmp(lastDiscoveryProfile, activeId) != 0 ||
-        lastDiscoveryMode != mode;
-    if (discoveryChanged) {
-      publishDiscovery();
-    } else if (mode == 1 && activeProfile) {
-      genericPublishState(*activeProfile, dps);
-    }
+        !discoveryInitialized || strcmp(lastDiscoveryProfile, activeId) != 0;
+    if (discoveryChanged) publishDiscovery();
   }
 
   if (mqtt.connected()) {
     JsonDocument dbg;
     dbg["profile"] = profileActiveId();
-    dbg["profile_selected"] = settings.profileId;
-    dbg["profile_detected"] = profileDetectedId();
-    dbg["profile_match"] = profileMatched;
+    dbg["profile_loaded"] = browserProfileLoaded();
     dbg["status"] = statusName(st.status);
     dbg["dps"] = dps.size();
     dbg["bytes"] = dpJsonLen;
     String out;
     out.reserve(256);
     serializeJson(dbg, out);
-    mqtt.publish(settings.mqttTopicDebug, out.c_str(), false);
+    mqtt.publish(mqttTopicDebug().c_str(), out.c_str(), false);
   }
 
   Serial.printf(
-      "[dp] active=%s detected=%s match=%u status=%s pwr=%uW temp=%.1fC "
-      "limit=%uA\n",
-      profileActiveId(), profileDetectedId(), profileMatched ? 1 : 0,
-      statusName(st.status), st.powerW, st.tempDc / 10.0f, st.currentLimit);
+      "[dp] profile=%s status=%s pwr=%uW temp=%.1fC limit=%uA\n",
+      profileActiveId(), statusName(st.status), st.powerW, st.tempDc / 10.0f,
+      st.currentLimit);
 
   publishState();
 }
@@ -1121,7 +1050,7 @@ void publishCommandResultNamed(const char *name, const char *result,
   String out;
   out.reserve(160);
   serializeJson(doc, out);
-  mqtt.publish(settings.mqttTopicResult, out.c_str(), false);
+  mqtt.publish(mqttTopicCommand("result").c_str(), out.c_str(), false);
 }
 
 void publishCommandResult(const char *result, const String &detail) {
@@ -1170,15 +1099,8 @@ bool sendDpSet(const String &dpsJson, const char *name) {
     publishCommandResultNamed(name, "busy", "DP snapshot in progress");
     return false;
   }
-  if (browserProfileSelected()) {
-    if (!profileMatched) {
-      publishCommandResultNamed(name, "unsupported_profile",
-                                "browser pack does not match last snapshot");
-      return false;
-    }
-  } else if (!activeProfile || !profileMatched ||
-             activeProfile == profilesFallback()) {
-    publishCommandResultNamed(name, "unsupported_profile", profileActiveId());
+  if (!browserProfileLoaded()) {
+    publishCommandResultNamed(name, "unsupported_profile", "no profile loaded");
     return false;
   }
   if (dpsJson.length() == 0 || dpsJson.length() > LORA_MAX_PAYLOAD) {
@@ -1225,12 +1147,6 @@ void commandCharge(bool on) {
 }
 
 void commandCurrent(long amps) {
-  if (amps < settings.minCurrent || amps > settings.maxCurrent) {
-    rejectCommand("current_limit",
-                  String("range is ") + String(settings.minCurrent) + "-" +
-                      String(settings.maxCurrent) + " A");
-    return;
-  }
   if (!activeProfile || !activeProfile->control.hasCurrent()) {
     rejectCommand("current_limit", "profile has no known current DP");
     return;
@@ -1241,11 +1157,6 @@ void commandCurrent(long amps) {
 }
 
 void commandDelay(long hours) {
-  if (hours < settings.minDelayH || hours > settings.maxDelayH) {
-    rejectCommand("delay", String("range is ") + String(settings.minDelayH) +
-                               "-" + String(settings.maxDelayH) + " h");
-    return;
-  }
   if (!activeProfile || !activeProfile->control.hasDelay()) {
     rejectCommand("delay", "profile has no known delay DP");
     return;
@@ -1366,7 +1277,7 @@ void maintainMqtt() {
   const char *mqttPass =
       settings.mqttPassword[0] ? settings.mqttPassword : nullptr;
   if (mqtt.connect(mqttClientId, mqttUser, mqttPass,
-                   settings.mqttTopicAvailability, 1, true, "offline")) {
+                   mqttTopicAvailability().c_str(), 1, true, "offline")) {
     mqttWasConnected = true;
     Serial.println("[mqtt] connected");
 
@@ -1376,15 +1287,13 @@ void maintainMqtt() {
     if (haveState) publishState();
     if (dpJsonLen > 0) publishDpJson();
 
-    mqtt.subscribe(settings.mqttTopicCmdCharge);
-    mqtt.subscribe(settings.mqttTopicCmdStart);
-    mqtt.subscribe(settings.mqttTopicCmdStop);
-    mqtt.subscribe(settings.mqttTopicCmdCurrent);
-    mqtt.subscribe(settings.mqttTopicCmdDelay);
-    mqtt.subscribe(settings.mqttTopicCmdMode);
-    mqtt.subscribe(settings.mqttTopicCmdQuery);
-    const String genericSubscription = genericCommandWildcard();
-    mqtt.subscribe(genericSubscription.c_str());
+    mqtt.subscribe(mqttTopicCommand("charge").c_str());
+    mqtt.subscribe(mqttTopicCommand("start").c_str());
+    mqtt.subscribe(mqttTopicCommand("stop").c_str());
+    mqtt.subscribe(mqttTopicCommand("current_limit").c_str());
+    mqtt.subscribe(mqttTopicCommand("delay").c_str());
+    mqtt.subscribe(mqttTopicCommand("mode").c_str());
+    mqtt.subscribe(mqttTopicCommand("query").c_str());
     const String packSubscription = browserProfileCommandTopic();
     mqtt.subscribe(packSubscription.c_str());
   } else {
@@ -1394,7 +1303,7 @@ void maintainMqtt() {
 
 void publishAvailability() {
   if (!mqtt.connected()) return;
-  mqtt.publish(settings.mqttTopicAvailability, remoteOnline ? "online" : "offline",
+  mqtt.publish(mqttTopicAvailability().c_str(), remoteOnline ? "online" : "offline",
                true);
 }
 
@@ -1429,7 +1338,7 @@ void publishLinkState(bool force) {
   json.reserve(384);
   serializeJson(doc, json);
 
-  if (!mqtt.publish(settings.mqttTopicLink, json.c_str(), true)) {
+  if (!mqtt.publish(mqttTopicLink().c_str(), json.c_str(), true)) {
     Serial.println("[mqtt] link publish failed");
   }
   lastLinkPublishMs = now;
@@ -1464,9 +1373,6 @@ void publishState() {
   doc["charge_seconds"] = lastStatus.chargeSeconds;
   doc["fw"] = FW_VERSION;
   doc["profile"] = profileActiveId();
-  doc["profile_selected"] = settings.profileId;
-  doc["profile_detected"] = profileDetectedId();
-  doc["profile_match"] = profileMatched;
   doc["profile_entities"] = profileEntityCount();
   if (profileError[0]) doc["profile_error"] = profileError;
   doc["delay_hours"] = lastDelayHours;
@@ -1475,7 +1381,7 @@ void publishState() {
   json.reserve(896);
   serializeJson(doc, json);
 
-  if (mqtt.publish(settings.mqttTopicState, json.c_str(), true)) {
+  if (mqtt.publish(mqttTopicState().c_str(), json.c_str(), true)) {
     Serial.printf("[mqtt] state %s %.2fkW\n", statusName(lastStatus.status),
                   lastStatus.powerW / 1000.0f);
   } else {
@@ -1493,7 +1399,7 @@ void publishStatusDiscovery() {
   const String entityId = haObjectId("status");
   doc["object_id"] = entityId;
   doc["unique_id"] = entityId;
-  doc["state_topic"] = settings.mqttTopicState;
+  doc["state_topic"] = mqttTopicState();
   doc["value_template"] = "{{ value_json.status }}";
   doc["device_class"] = "enum";
   doc["icon"] = "mdi:ev-station";
@@ -1521,7 +1427,7 @@ void publishSensor(const char *objectId, const String &name,
   const String entityId = haObjectId(objectId);
   doc["object_id"] = entityId;
   doc["unique_id"] = entityId;
-  doc["state_topic"] = stateTopic ? stateTopic : settings.mqttTopicState;
+  doc["state_topic"] = stateTopic ? stateTopic : mqttTopicState();
   doc["value_template"] = valueTemplate;
   if (unit && unit[0]) doc["unit_of_measurement"] = unit;
   if (deviceClass && deviceClass[0]) doc["device_class"] = deviceClass;
@@ -1541,7 +1447,7 @@ void publishBinarySensor(const char *objectId, const String &name,
   const String entityId = haObjectId(objectId);
   doc["object_id"] = entityId;
   doc["unique_id"] = entityId;
-  doc["state_topic"] = settings.mqttTopicState;
+  doc["state_topic"] = mqttTopicState();
   doc["value_template"] = valueTemplate;
   if (deviceClass && deviceClass[0]) doc["device_class"] = deviceClass;
   if (icon && icon[0]) doc["icon"] = icon;
@@ -1558,7 +1464,7 @@ void publishSwitchEntity(const char *objectId, const String &name,
   const String entityId = haObjectId(objectId);
   doc["object_id"] = entityId;
   doc["unique_id"] = entityId;
-  doc["state_topic"] = settings.mqttTopicState;
+  doc["state_topic"] = mqttTopicState();
   doc["value_template"] = valueTemplate;
   doc["command_topic"] = commandTopic;
   doc["payload_on"] = "ON";
@@ -1593,7 +1499,7 @@ void publishNumberEntity(const char *objectId, const String &name,
   const String entityId = haObjectId(objectId);
   doc["object_id"] = entityId;
   doc["unique_id"] = entityId;
-  doc["state_topic"] = settings.mqttTopicState;
+  doc["state_topic"] = mqttTopicState();
   doc["value_template"] = valueTemplate;
   doc["command_topic"] = commandTopic;
   doc["min"] = minValue;
@@ -1613,16 +1519,16 @@ String entityName(const char *suffix) {
 void publishLinkDiscovery() {
   publishSensor("link_age", entityName("link age"), "{{ value_json.age }}", "s",
                 "duration", "measurement", "mdi:timer-sand", 0,
-                settings.mqttTopicLink);
+                mqttTopicLink().c_str());
   publishSensor("rssi", entityName("RSSI"), "{{ value_json.rssi }}", "dBm",
                 "signal_strength", "measurement", "mdi:signal", 0,
-                settings.mqttTopicLink);
+                mqttTopicLink().c_str());
   publishSensor("snr", entityName("SNR"), "{{ value_json.snr }}", "dB", nullptr,
                 "measurement", "mdi:signal-variant", 1,
-                settings.mqttTopicLink);
+                mqttTopicLink().c_str());
   publishSensor("last_seen", entityName("last seen"), "{{ value_json.last_seen }}",
                 nullptr, "timestamp", nullptr, "mdi:clock-outline", -1,
-                settings.mqttTopicLink);
+                mqttTopicLink().c_str());
 }
 
 void publishLegacyDiscovery() {
@@ -1678,22 +1584,22 @@ void publishLegacyDiscovery() {
 
   if (settings.enableCommands) {
     publishSwitchEntity("charge_control", entityName("charge control"),
-                        settings.mqttTopicCmdCharge,
+                        mqttTopicCommand("charge").c_str(),
                         "{{ 'ON' if value_json.charge_enabled else 'OFF' }}",
                         "mdi:ev-station");
     publishButtonEntity("charge_enable", entityName("enable charging"),
-                        settings.mqttTopicCmdStart, "mdi:play");
+                        mqttTopicCommand("start").c_str(), "mdi:play");
     publishButtonEntity("charge_disable", entityName("disable charging"),
-                        settings.mqttTopicCmdStop, "mdi:stop");
+                        mqttTopicCommand("stop").c_str(), "mdi:stop");
     publishNumberEntity("current_limit", entityName("current limit"),
-                        settings.mqttTopicCmdCurrent,
+                        mqttTopicCommand("current_limit").c_str(),
                         "{{ value_json.current_limit }}", "A",
-                        settings.minCurrent, settings.maxCurrent, 1,
+                        CHARGER_MIN_CURRENT, CHARGER_MAX_CURRENT, 1,
                         "mdi:current-ac");
     publishNumberEntity("charge_delay", entityName("charge delay"),
-                        settings.mqttTopicCmdDelay,
+                        mqttTopicCommand("delay").c_str(),
                         "{{ value_json.delay_hours }}", "h",
-                        settings.minDelayH, settings.maxDelayH, 1,
+                        CHARGER_MIN_DELAY_H, CHARGER_MAX_DELAY_H, 1,
                         "mdi:timer-outline");
   }
 }
@@ -1737,66 +1643,40 @@ void clearLegacyDiscovery() {
   }
 }
 
-void publishDiscovery() {
-  const bool packMode = browserProfileSelected();
-  const ProfileDef *profile = activeProfile;
-  if (!packMode && !profile && strcmp(settings.profileId, "auto") != 0) {
-    profile = profileFind(settings.profileId);
-  }
-  const bool generic = !packMode && profile && profile->hasGenericEntities();
+void clearLinkDiscovery() {
+  clearHaConfig("sensor", "link_age");
+  clearHaConfig("sensor", "rssi");
+  clearHaConfig("sensor", "snr");
+  clearHaConfig("sensor", "last_seen");
+}
 
-  if (packMode) {
-    if (!legacyDiscoveryCleared) {
-      clearLegacyDiscovery();
-      legacyDiscoveryCleared = true;
-    }
-    if (!genericDiscoveryCleared) {
-      genericClearDiscovery();
-      genericClearState();
-      genericDiscoveryCleared = true;
-    }
+void publishDiscovery() {
+  if (!legacyDiscoveryCleared) {
+    clearLegacyDiscovery();
+    legacyDiscoveryCleared = true;
+  }
+  if (!genericDiscoveryCleared) {
+    genericClearDiscovery();
+    genericClearState();
+    genericDiscoveryCleared = true;
+  }
+  if (browserProfileLoaded()) {
     browserProfileClearDiscovery();
     browserProfilePublishDiscovery();
     packDiscoveryCleared = false;
-  } else if (generic) {
-    if (!legacyDiscoveryCleared) {
-      clearLegacyDiscovery();
-      legacyDiscoveryCleared = true;
-    }
-    if (!packDiscoveryCleared) {
-      browserProfileClearDiscovery();
-      packDiscoveryCleared = true;
-    }
-    const bool profileChanged =
-        !discoveryInitialized || lastDiscoveryMode != 1 ||
-        strcmp(lastDiscoveryProfile, profile->id) != 0;
-    if (profileChanged) genericClearState();
-    genericPublishDiscovery(*profile);
-    genericDiscoveryCleared = false;
-    if (haveState && dpJsonLen > 0) {
-      genericPublishStateFromJson(*profile, dpJson);
-    }
-  } else {
-    if (!packDiscoveryCleared) {
-      browserProfileClearDiscovery();
-      packDiscoveryCleared = true;
-    }
-    if (!genericDiscoveryCleared) {
-      genericClearDiscovery();
-      genericClearState();
-      genericDiscoveryCleared = true;
-    }
-    publishLegacyDiscovery();
-    legacyDiscoveryCleared = false;
+  } else if (!packDiscoveryCleared) {
+    browserProfileClearDiscovery();
+    packDiscoveryCleared = true;
   }
 
+  clearLinkDiscovery();
   publishLinkDiscovery();
 
-  const char *activeId = packMode ? browserProfileId()
-                                  : (profile ? profile->id : "");
+  const char *activeId =
+      browserProfileLoaded() ? browserProfileId() : "none";
   strncpy(lastDiscoveryProfile, activeId, sizeof(lastDiscoveryProfile) - 1);
   lastDiscoveryProfile[sizeof(lastDiscoveryProfile) - 1] = '\0';
-  lastDiscoveryMode = packMode ? 2 : (generic ? 1 : 0);
+  lastDiscoveryMode = browserProfileLoaded() ? 2 : 0;
   discoveryInitialized = true;
 }
 
@@ -1808,17 +1688,13 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
   p.trim();
   Serial.printf("[mqtt] %s -> %s\n", t.c_str(), p.c_str());
 
-  if (t == settings.mqttTopicCmdQuery) {
+  if (t == mqttTopicCommand("query")) {
     nextDpQueryMs = millis();
     return;
   }
   if (t == browserProfileCommandTopic()) {
     if (!browserProfileSelected()) {
       rejectCommand("pack", "no browser profile selected");
-      return;
-    }
-    if (!profileMatched) {
-      rejectCommand("pack", "browser profile does not match the last snapshot");
       return;
     }
     if (p.length() == 0) {
@@ -1839,15 +1715,15 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
     sendDpSet(fragment, "pack");
     return;
   }
-  if (t == settings.mqttTopicCmdStart) {
+  if (t == mqttTopicCommand("start")) {
     commandCharge(true);
     return;
   }
-  if (t == settings.mqttTopicCmdStop) {
+  if (t == mqttTopicCommand("stop")) {
     commandCharge(false);
     return;
   }
-  if (t == settings.mqttTopicCmdCharge) {
+  if (t == mqttTopicCommand("charge")) {
     if (p.length() == 0) {
       rejectCommand("charge", "payload must be ON or OFF");
     } else {
@@ -1855,33 +1731,16 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
     }
     return;
   }
-  if (t == settings.mqttTopicCmdCurrent) {
+  if (t == mqttTopicCommand("current_limit")) {
     commandCurrent(p.toInt());
     return;
   }
-  if (t == settings.mqttTopicCmdDelay) {
+  if (t == mqttTopicCommand("delay")) {
     commandDelay(p.toInt());
     return;
   }
-  if (t == settings.mqttTopicCmdMode) {
+  if (t == mqttTopicCommand("mode")) {
     commandMode(p);
-    return;
-  }
-
-  const String genericPrefix = genericCommandTopic("");
-  if (t.startsWith(genericPrefix)) {
-    const String key = t.substring(genericPrefix.length());
-    if (!activeProfile || !profileMatched) {
-      rejectCommand("generic", "profile does not match the last snapshot");
-      return;
-    }
-    String fragment;
-    String error;
-    if (genericBuildCommand(*activeProfile, key, p, fragment, error)) {
-      sendDpSet(fragment, key.c_str());
-    } else {
-      rejectCommand(key.c_str(), error);
-    }
     return;
   }
 }
@@ -1899,24 +1758,6 @@ void setup() {
   loadSettings();
   profilesInit();
   browserProfileInit();
-  profilesLoadCustomFromNvs();
-  profilesSetBuiltinControl("single-phase", settings.dpSingleChargeId,
-                            settings.dpSingleCurrentId,
-                            settings.dpSingleDelayId,
-                            settings.dpSingleModeId);
-  profilesSetBuiltinControl("3-phase", settings.dpThreeChargeId,
-                            settings.dpThreeCurrentId,
-                            settings.dpThreeDelayId,
-                            settings.dpThreeModeId);
-  profilesSetBuiltinControl("F-OBZ2", settings.dpObz2ChargeId,
-                            settings.dpObz2CurrentId, 0, 0);
-  if (strcmp(settings.profileId, "auto") != 0 &&
-      !profileFind(settings.profileId) && !browserProfileSelected()) {
-    Serial.printf("[profile] selected '%s' is not loaded; using auto\n",
-                  settings.profileId);
-    snprintf(settings.profileId, sizeof(settings.profileId), "auto");
-    saveSettings();
-  }
   maybeSdFirmwareUpdate(settings.sdFirmwareFile, drawSdUpdate);
   bootGuardOnBoot();
   drawSplash();

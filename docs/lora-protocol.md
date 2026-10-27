@@ -79,7 +79,7 @@ does not interpret DP numbers.
    chunks it has, and asks for missing chunks again if needed.
 4. The remote retransmits only the missing chunks after a short timeout.
 5. The base parses the raw `dps` object, detects the profile, publishes
-   `tuya-lora/charger/dps` and `tuya-lora/charger/state`, and schedules the next
+   `tuya-lora/<slug>/dps` and `tuya-lora/<slug>/state`, and schedules the next
    query.
 
 A full snapshot is requested every 60 seconds. The base marks the remote link
@@ -103,14 +103,14 @@ The remote wraps the fragment in the correct Tuya `CONTROL` (3.1/3.3) or
 `CONTROL_NEW` (3.4/3.5) envelope. The base owns the model-specific mapping, so it
 can change without reflashing the remote node.
 
-Control is accepted only after the base has received a valid snapshot and
-detected a supported profile. Unknown or fallback profiles reject commands.
+Control is accepted only after a profile is loaded and the base has received a
+valid snapshot. Without a profile, commands are rejected.
 
 ## State mapping
 
 The LoRa link has no dedicated status payload. The base decodes the raw `dps`
 object into its local `StatusData` struct and publishes the mapped state to
-`tuya-lora/charger/state`. DP numbers and meanings are documented in
+`tuya-lora/<slug>/state`. DP numbers and meanings are documented in
 [`tuya-device.md`](tuya-device.md); published fields are documented in
 [`home-assistant.md`](home-assistant.md).
 
@@ -141,9 +141,9 @@ struct __attribute__((packed)) HelloPayload {
 
 ## Control DP mapping
 
-The base builds these fragments from the detected profile. The DP numbers are
+The base builds these fragments from the active profile. The DP numbers are
 defaults in `base-node/config.h`; confirm the real map in
-`tuya-lora/charger/dps` before relying on remote control.
+`tuya-lora/<slug>/dps` before relying on remote control.
 
 | Action | Single-phase | 3-phase | F-OBZ2 |
 |---|---|---|---|
@@ -252,7 +252,7 @@ interval when using SF9 or slower.
 
 ## Link diagnostics
 
-The base publishes `tuya-lora/charger/link` on every valid LoRa frame and every
+The base publishes `tuya-lora/<slug>/link` on every valid LoRa frame and every
 10 seconds while the remote link is online. The payload includes:
 
 ```json
