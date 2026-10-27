@@ -121,6 +121,20 @@ def is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def mapping_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if is_number(value):
+        return float(value) != 0.0
+    if isinstance(value, str):
+        lowered = value.lower()
+        if lowered in {"true", "1", "on", "yes"}:
+            return True
+        if lowered in {"false", "0", "off", "no"}:
+            return False
+    return None
+
+
 def derive_name(entity: dict[str, Any]) -> str:
     name = entity.get("name")
     if name:
@@ -351,14 +365,15 @@ def convert_entity(entity: dict[str, Any], index: int, path: str) -> dict[str, A
     mapping = primary.get("mapping", [])
     visible = [item for item in mapping if not item.get("hidden")]
     has_from = [item for item in visible if "dps_val" in item]
-    has_on = any(item.get("value") is True for item in visible)
-    has_off = any(item.get("value") is False for item in visible)
+    has_on = any(mapping_bool(item.get("value")) is True for item in visible)
+    has_off = any(mapping_bool(item.get("value")) is False for item in visible)
+    has_press = any(item.get("value") is True for item in visible)
 
     if entity_type == "select" and not has_from:
         raise SkipProfile(f"{path}: select needs at least one visible option")
     if entity_type == "switch" and mapping and (not has_on or not has_off):
         raise SkipProfile(f"{path}: switch mapping needs on and off")
-    if entity_type == "button" and primary["type"] != "boolean" and not has_on:
+    if entity_type == "button" and primary["type"] != "boolean" and not has_press:
         raise SkipProfile(f"{path}: button needs a press mapping")
 
     name = truncate_utf8(derive_name(entity), MAX_ENTITY_NAME)
