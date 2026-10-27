@@ -486,6 +486,12 @@ object is built from the latest snapshot; DPs missing from that snapshot are not
 persisted. If a descriptor has many enum options, raise the MQTT buffer in the
 base web UI (the default for new settings is 4096 bytes).
 
+A generated library of 104 tuya-local-compatible profiles is in
+[`profiles/`](../profiles/README.md); use
+[`tools/tuya_local_to_profile.py`](../tools/README.md) to regenerate it or try
+more descriptors. The full tuya-local collection contains 1779 descriptors, but
+many use unsupported entity types or exceed the compact limits.
+
 #### Legacy `state`/`control` descriptors
 
 The built-in Feyree and F-OBZ2 profiles, and existing compact custom profiles,

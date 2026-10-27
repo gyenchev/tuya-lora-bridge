@@ -1,0 +1,194 @@
+{
+  "profiles": [
+    {
+      "id": "littepets",
+      "name": "Cat litter box",
+      "description": "Littepets Cute Baby MA2 Series",
+      "detect": {
+        "require": [
+          1,
+          2,
+          3,
+          10,
+          17,
+          7,
+          8,
+          24
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "switch",
+          "name": "Power",
+          "dps": [
+            {
+              "id": 1,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ],
+          "icon": "mdi:switch"
+        },
+        {
+          "entity": "sensor",
+          "name": "Work mode",
+          "dps": [
+            {
+              "id": 2,
+              "type": "string",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": "auto_clean",
+                  "value": "Auto"
+                },
+                {
+                  "dps_val": "manual_clean",
+                  "value": "Manual"
+                },
+                {
+                  "dps_val": "sleep",
+                  "value": "Sleep"
+                },
+                {
+                  "dps_val": "uv",
+                  "value": "UV"
+                },
+                {
+                  "dps_val": "deodorization",
+                  "value": "Deodorisation"
+                }
+              ]
+            }
+          ],
+          "class": "enum",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "switch",
+          "name": "Manual clean",
+          "dps": [
+            {
+              "id": 3,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ],
+          "icon": "mdi:broom"
+        },
+        {
+          "entity": "switch",
+          "name": "Sleep",
+          "dps": [
+            {
+              "id": 10,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ]
+        },
+        {
+          "entity": "switch",
+          "name": "Deodorise",
+          "dps": [
+            {
+              "id": 17,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ],
+          "icon": "mdi:spray"
+        },
+        {
+          "entity": "sensor",
+          "name": "Number of times used",
+          "dps": [
+            {
+              "id": 7,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "times"
+            }
+          ],
+          "category": "diagnostic"
+        },
+        {
+          "entity": "sensor",
+          "name": "Last visit duration",
+          "dps": [
+            {
+              "id": 8,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "s"
+            }
+          ],
+          "class": "duration",
+          "category": "diagnostic",
+          "icon": "mdi:paper-roll"
+        },
+        {
+          "entity": "sensor",
+          "name": "Status",
+          "dps": [
+            {
+              "id": 24,
+              "type": "string",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": "standby",
+                  "value": "standby"
+                },
+                {
+                  "dps_val": "off",
+                  "value": "off"
+                },
+                {
+                  "dps_val": "waiting_cluster",
+                  "value": "caking"
+                },
+                {
+                  "dps_val": "cleaning",
+                  "value": "cleaning"
+                },
+                {
+                  "dps_val": "uv",
+                  "value": "sterilizing"
+                },
+                {
+                  "dps_val": "deodorization",
+                  "value": "deodorizing"
+                },
+                {
+                  "dps_val": "sleep",
+                  "value": "sleep"
+                },
+                {
+                  "dps_val": "in_toilet",
+                  "value": "occupied"
+                }
+              ]
+            }
+          ],
+          "class": "enum",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "sensor",
+          "name": "Battery",
+          "dps": [
+            {
+              "id": 101,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%"
+            }
+          ],
+          "class": "battery"
+        }
+      ]
+    }
+  ]
+}

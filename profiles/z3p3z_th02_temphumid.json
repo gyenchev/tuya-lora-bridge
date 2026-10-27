@@ -1,0 +1,62 @@
+{
+  "profiles": [
+    {
+      "id": "z3p3z_th02_temphumid",
+      "name": "Temperature and humidity (TH02 Z3-P3Z)",
+      "description": "TH02 Z3-P3Z",
+      "detect": {
+        "require": [
+          101,
+          102,
+          103
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Humidity",
+          "dps": [
+            {
+              "id": 101,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement"
+            }
+          ],
+          "class": "humidity"
+        },
+        {
+          "entity": "sensor",
+          "name": "Battery",
+          "dps": [
+            {
+              "id": 102,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement"
+            }
+          ],
+          "class": "battery",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "sensor",
+          "name": "Temperature",
+          "dps": [
+            {
+              "id": 103,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement"
+            }
+          ],
+          "class": "temperature"
+        }
+      ]
+    }
+  ]
+}

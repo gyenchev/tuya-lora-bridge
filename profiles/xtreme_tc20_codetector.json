@@ -1,0 +1,112 @@
+{
+  "profiles": [
+    {
+      "id": "xtreme_tc20_codetector",
+      "name": "Carbon monoxide detector (Xtreme TC20)",
+      "description": "Xtreme TC20",
+      "detect": {
+        "require": [
+          1,
+          9,
+          11,
+          8
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "binary_sensor",
+          "name": "Gas",
+          "dps": [
+            {
+              "id": 1,
+              "type": "string",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": "alarm",
+                  "value": true
+                },
+                {
+                  "dps_val": "normal",
+                  "value": false
+                }
+              ]
+            }
+          ],
+          "class": "gas"
+        },
+        {
+          "entity": "button",
+          "name": "Self check",
+          "dps": [
+            {
+              "id": 8,
+              "type": "boolean",
+              "name": "button"
+            }
+          ],
+          "category": "config"
+        },
+        {
+          "entity": "sensor",
+          "name": "Self check",
+          "dps": [
+            {
+              "id": 9,
+              "type": "string",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": "checking",
+                  "value": "checking"
+                },
+                {
+                  "dps_val": "check_success",
+                  "value": "ok"
+                },
+                {
+                  "dps_val": "check_failure",
+                  "value": "failed"
+                },
+                {
+                  "dps_val": "others",
+                  "value": "unknown"
+                }
+              ]
+            }
+          ],
+          "class": "enum",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "binary_sensor",
+          "name": "Problem",
+          "dps": [
+            {
+              "id": 11,
+              "type": "bitfield",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": 0,
+                  "value": false
+                },
+                {
+                  "value": true
+                }
+              ]
+            },
+            {
+              "id": 11,
+              "type": "bitfield",
+              "name": "fault_code"
+            }
+          ],
+          "class": "problem",
+          "category": "diagnostic"
+        }
+      ]
+    }
+  ]
+}

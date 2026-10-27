@@ -1,0 +1,119 @@
+{
+  "profiles": [
+    {
+      "id": "kkmoon_airquality_monit",
+      "name": "Air quality",
+      "description": "KKMoon 7in1 air quality meter",
+      "detect": {
+        "require": [
+          21,
+          2,
+          27,
+          12,
+          13,
+          14,
+          15
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Air Quality",
+          "dps": [
+            {
+              "id": 21,
+              "type": "string",
+              "name": "sensor"
+            }
+          ]
+        },
+        {
+          "entity": "sensor",
+          "name": "Pm25",
+          "dps": [
+            {
+              "id": 2,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ugm3",
+              "class": "measurement"
+            }
+          ],
+          "class": "pm25"
+        },
+        {
+          "entity": "sensor",
+          "name": "Formaldehyde",
+          "dps": [
+            {
+              "id": 27,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ugm3",
+              "class": "measurement"
+            }
+          ],
+          "class": "volatile_organic_compounds"
+        },
+        {
+          "entity": "sensor",
+          "name": "Temperature",
+          "dps": [
+            {
+              "id": 12,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "temperature"
+        },
+        {
+          "entity": "sensor",
+          "name": "Humidity",
+          "dps": [
+            {
+              "id": 13,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement"
+            }
+          ],
+          "class": "humidity"
+        },
+        {
+          "entity": "sensor",
+          "name": "Volatile Organic Compounds",
+          "dps": [
+            {
+              "id": 14,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ugm3",
+              "class": "measurement"
+            }
+          ],
+          "class": "volatile_organic_compounds"
+        },
+        {
+          "entity": "sensor",
+          "name": "Carbon Dioxide",
+          "dps": [
+            {
+              "id": 15,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ppm",
+              "class": "measurement"
+            }
+          ],
+          "class": "carbon_dioxide"
+        }
+      ]
+    }
+  ]
+}

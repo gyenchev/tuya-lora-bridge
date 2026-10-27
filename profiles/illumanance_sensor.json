@@ -1,0 +1,59 @@
+{
+  "profiles": [
+    {
+      "id": "illumanance_sensor",
+      "name": "Illuminance sensor",
+      "description": "Generated from illumanance_sensor.yaml",
+      "detect": {
+        "require": [
+          2,
+          1
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Brightness",
+          "dps": [
+            {
+              "id": 2,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "lx",
+              "class": "measurement"
+            }
+          ],
+          "class": "illuminance"
+        },
+        {
+          "entity": "sensor",
+          "name": "Light level",
+          "dps": [
+            {
+              "id": 1,
+              "type": "string",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": "low",
+                  "value": "Low"
+                },
+                {
+                  "dps_val": "middle",
+                  "value": "Medium"
+                },
+                {
+                  "dps_val": "high",
+                  "value": "High"
+                }
+              ]
+            }
+          ],
+          "class": "enum",
+          "category": "diagnostic"
+        }
+      ]
+    }
+  ]
+}

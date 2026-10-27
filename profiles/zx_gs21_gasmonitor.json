@@ -1,0 +1,171 @@
+{
+  "profiles": [
+    {
+      "id": "zx_gs21_gasmonitor",
+      "name": "Gas leak detector (ZX-GS21)",
+      "description": "ZX-GS21",
+      "detect": {
+        "require": [
+          2,
+          1,
+          10,
+          12,
+          16,
+          18,
+          19,
+          7
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Gas leak",
+          "dps": [
+            {
+              "id": 2,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "% LEL",
+              "class": "measurement"
+            }
+          ]
+        },
+        {
+          "entity": "binary_sensor",
+          "name": "Gas",
+          "dps": [
+            {
+              "id": 1,
+              "type": "string",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": "alarm",
+                  "value": true
+                },
+                {
+                  "value": false
+                }
+              ]
+            }
+          ],
+          "class": "gas"
+        },
+        {
+          "entity": "number",
+          "name": "Alarm duration",
+          "dps": [
+            {
+              "id": 7,
+              "type": "integer",
+              "name": "value",
+              "unit": "min",
+              "range": {
+                "min": 0,
+                "max": 60
+              }
+            }
+          ],
+          "class": "duration",
+          "category": "config",
+          "icon": "mdi:timer"
+        },
+        {
+          "entity": "button",
+          "name": "Self check",
+          "dps": [
+            {
+              "id": 8,
+              "type": "boolean",
+              "name": "button"
+            },
+            {
+              "id": 9,
+              "type": "string",
+              "name": "result"
+            }
+          ],
+          "category": "config"
+        },
+        {
+          "entity": "binary_sensor",
+          "name": "Preheat",
+          "dps": [
+            {
+              "id": 10,
+              "type": "boolean",
+              "name": "sensor"
+            }
+          ],
+          "class": "heat",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "binary_sensor",
+          "name": "Lifecycle",
+          "dps": [
+            {
+              "id": 12,
+              "type": "boolean",
+              "name": "sensor"
+            }
+          ],
+          "category": "diagnostic"
+        },
+        {
+          "entity": "switch",
+          "name": "Silent",
+          "dps": [
+            {
+              "id": 16,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ],
+          "category": "config"
+        },
+        {
+          "entity": "binary_sensor",
+          "name": "Carbon monoxide alarm",
+          "dps": [
+            {
+              "id": 18,
+              "type": "string",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": "alarm",
+                  "value": true
+                },
+                {
+                  "value": false
+                }
+              ]
+            }
+          ],
+          "class": "gas"
+        },
+        {
+          "entity": "sensor",
+          "name": "Carbon Monoxide",
+          "dps": [
+            {
+              "id": 19,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ppm",
+              "class": "measurement"
+            },
+            {
+              "id": 18,
+              "type": "string",
+              "name": "alarm_state"
+            }
+          ],
+          "class": "carbon_monoxide"
+        }
+      ]
+    }
+  ]
+}

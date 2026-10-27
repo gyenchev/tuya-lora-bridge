@@ -1,0 +1,261 @@
+{
+  "profiles": [
+    {
+      "id": "kanchou_petfountain",
+      "name": "Pet fountain",
+      "description": "Kanchou; Kanchou; Fontanna Smart FONT7-SMART-B",
+      "detect": {
+        "require": [
+          3,
+          4,
+          102,
+          2
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "select",
+          "name": "Activation Mode",
+          "dps": [
+            {
+              "id": 2,
+              "type": "string",
+              "name": "option",
+              "mapping": [
+                {
+                  "dps_val": "normal",
+                  "value": "normal"
+                },
+                {
+                  "dps_val": "night",
+                  "value": "night"
+                }
+              ]
+            }
+          ],
+          "category": "config"
+        },
+        {
+          "entity": "sensor",
+          "name": "Filter Life",
+          "dps": [
+            {
+              "id": 3,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "d",
+              "class": "measurement"
+            }
+          ],
+          "class": "duration",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "sensor",
+          "name": "Pump cleaning due",
+          "dps": [
+            {
+              "id": 4,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "d",
+              "class": "measurement"
+            }
+          ],
+          "class": "duration",
+          "category": "diagnostic",
+          "icon": "mdi:pump"
+        },
+        {
+          "entity": "button",
+          "name": "Filter Reset",
+          "dps": [
+            {
+              "id": 5,
+              "type": "boolean",
+              "name": "button",
+              "optional": true
+            }
+          ],
+          "category": "config"
+        },
+        {
+          "entity": "button",
+          "name": "Pump clean reset",
+          "dps": [
+            {
+              "id": 6,
+              "type": "boolean",
+              "name": "button",
+              "optional": true
+            }
+          ],
+          "category": "config",
+          "icon": "mdi:pump"
+        },
+        {
+          "entity": "number",
+          "name": "Filter change interval",
+          "dps": [
+            {
+              "id": 7,
+              "type": "integer",
+              "name": "value",
+              "unit": "d",
+              "range": {
+                "min": 0,
+                "max": 30
+              },
+              "optional": true
+            }
+          ],
+          "category": "config",
+          "icon": "mdi:air-filter"
+        },
+        {
+          "entity": "number",
+          "name": "Pump clean interval",
+          "dps": [
+            {
+              "id": 8,
+              "type": "integer",
+              "name": "value",
+              "unit": "d",
+              "range": {
+                "min": 0,
+                "max": 15
+              },
+              "optional": true
+            }
+          ],
+          "category": "config",
+          "icon": "mdi:pump"
+        },
+        {
+          "entity": "sensor",
+          "name": "Water Level",
+          "dps": [
+            {
+              "id": 102,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "mL",
+              "class": "measurement"
+            },
+            {
+              "id": 9,
+              "type": "string",
+              "name": "status",
+              "optional": true,
+              "mapping": [
+                {
+                  "dps_val": "low",
+                  "value": "low"
+                },
+                {
+                  "dps_val": "middle",
+                  "value": "medium"
+                },
+                {
+                  "dps_val": "high",
+                  "value": "high"
+                }
+              ]
+            },
+            {
+              "id": 10,
+              "type": "integer",
+              "name": "percent",
+              "optional": true
+            }
+          ],
+          "class": "volume_storage"
+        },
+        {
+          "entity": "sensor",
+          "name": "Water consumption",
+          "dps": [
+            {
+              "id": 22,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "mL",
+              "class": "measurement",
+              "optional": true
+            }
+          ],
+          "class": "volume"
+        },
+        {
+          "entity": "binary_sensor",
+          "name": "Problem",
+          "dps": [
+            {
+              "id": 23,
+              "type": "bitfield",
+              "name": "sensor",
+              "optional": true,
+              "mapping": [
+                {
+                  "dps_val": 0,
+                  "value": false
+                },
+                {
+                  "dps_val": 1,
+                  "value": false
+                },
+                {
+                  "value": false
+                },
+                {
+                  "value": true
+                }
+              ]
+            },
+            {
+              "id": 23,
+              "type": "bitfield",
+              "name": "fault_code",
+              "optional": true
+            },
+            {
+              "id": 23,
+              "type": "bitfield",
+              "name": "description",
+              "optional": true,
+              "mapping": [
+                {
+                  "dps_val": 0,
+                  "value": "ok"
+                },
+                {
+                  "dps_val": 1,
+                  "value": "tank_empty"
+                },
+                {
+                  "dps_val": 2,
+                  "value": "filter_used"
+                },
+                {
+                  "dps_val": 4,
+                  "value": "pump_dirty"
+                },
+                {
+                  "dps_val": 8,
+                  "value": "battery_low"
+                },
+                {
+                  "dps_val": 16,
+                  "value": "pump_blocked"
+                }
+              ]
+            }
+          ],
+          "class": "problem",
+          "category": "diagnostic"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "profiles": [
+    {
+      "id": "nedis_openclose_sensor",
+      "name": "Door/window sensor",
+      "description": "Nedis Zigbee ZBSD10WT",
+      "detect": {
+        "require": [
+          1,
+          2
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "binary_sensor",
+          "name": "Door",
+          "dps": [
+            {
+              "id": 1,
+              "type": "boolean",
+              "name": "sensor"
+            }
+          ],
+          "class": "door"
+        },
+        {
+          "entity": "sensor",
+          "name": "Battery",
+          "dps": [
+            {
+              "id": 2,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement"
+            }
+          ],
+          "class": "battery",
+          "category": "diagnostic"
+        }
+      ]
+    }
+  ]
+}

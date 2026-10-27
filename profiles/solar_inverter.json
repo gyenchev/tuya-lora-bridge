@@ -1,0 +1,140 @@
+{
+  "profiles": [
+    {
+      "id": "solar_inverter",
+      "name": "Solar inverter (SG700MD)",
+      "description": "SG700MD",
+      "detect": {
+        "require": [
+          2,
+          10,
+          102,
+          103,
+          104,
+          105
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Energy",
+          "dps": [
+            {
+              "id": 2,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "kWh",
+              "class": "total_increasing",
+              "scale": 100.0
+            },
+            {
+              "id": 15,
+              "type": "string",
+              "name": "model"
+            },
+            {
+              "id": 16,
+              "type": "string",
+              "name": "inverter_id"
+            }
+          ],
+          "class": "energy"
+        },
+        {
+          "entity": "sensor",
+          "name": "Power",
+          "dps": [
+            {
+              "id": 10,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "W",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "power",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "sensor",
+          "name": "DC current",
+          "dps": [
+            {
+              "id": 102,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "A",
+              "class": "measurement",
+              "scale": 100.0
+            }
+          ],
+          "class": "current",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "sensor",
+          "name": "DC voltage",
+          "dps": [
+            {
+              "id": 103,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "V",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "voltage",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "sensor",
+          "name": "AC voltage",
+          "dps": [
+            {
+              "id": 104,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "V",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "voltage",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "sensor",
+          "name": "AC current",
+          "dps": [
+            {
+              "id": 105,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "A",
+              "class": "measurement",
+              "scale": 100.0
+            }
+          ],
+          "class": "current",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "switch",
+          "name": "Inverter switch",
+          "dps": [
+            {
+              "id": 101,
+              "type": "boolean",
+              "name": "switch",
+              "optional": true
+            }
+          ],
+          "category": "config"
+        }
+      ]
+    }
+  ]
+}

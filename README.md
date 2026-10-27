@@ -59,6 +59,8 @@ The Tuya device stays on its own local protections and schedules.
   ranges and enum options.
 - Selectable DP profiles with auto-detection, plus up to four custom profiles
   defined as validated JSON in the base node's NVS.
+- Generated profile library with 104 tuya-local-compatible descriptors plus a
+  converter for generating more from the tuya-local device collection.
 - Built-in Feyree and F-OBZ2 compatibility profiles with stable entity IDs.
 - Web UI for all runtime settings; settings are stored in ESP32 NVS.
 - OLED status display on both nodes.
@@ -93,6 +95,15 @@ tuya-lora-bridge/
 │   ├── network-and-pairing.md
 │   ├── testing.md
 │   └── tuya-device.md
+├── profiles/
+│   ├── INDEX.md
+│   ├── README.md
+│   ├── pack.jsonl
+│   └── <generated-profile>.json
+├── tools/
+│   ├── README.md
+│   ├── requirements.txt
+│   └── tuya_local_to_profile.py
 └── firmware/
     ├── README.md
     ├── base-node/
@@ -323,6 +334,13 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
   not implemented.
 - A generic profile can define up to 10 entities, 4 DPs per entity and 32 value
   mapping rules; the custom JSON limit is 8192 bytes.
+- The generated library contains 104 profiles that fit the compact schema. The
+  full tuya-local collection has 1779 descriptors; many use unsupported entity
+  types such as climate, light, fan, cover or lock, or exceed the compact
+  limits.
+- The firmware loads at most four custom profiles in NVS. Generated profiles are
+  pasted one at a time; `profiles/pack.jsonl` is prepared for a future on-device
+  profile-pack loader.
 - Raw DP snapshots are capped at 2560 bytes (32 LoRa chunks of 80 bytes).
 - The base node publishes a full snapshot every 60 seconds. Commands add an
   immediate refresh, but this is not a real-time control link.
@@ -344,6 +362,8 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 | [`docs/home-assistant.md`](docs/home-assistant.md) | MQTT topics, discovery, entities, automations and dashboards |
 | [`docs/hardware-safety.md`](docs/hardware-safety.md) | BOM, power, enclosure, radio rules and EVSE safety |
 | [`docs/testing.md`](docs/testing.md) | Validation matrix, acceptance checks and known limitations |
+| [`profiles/README.md`](profiles/README.md) | Generated tuya-local profile library, coverage and usage |
+| [`tools/README.md`](tools/README.md) | tuya-local YAML to compact profile converter |
 | [`firmware/README.md`](firmware/README.md) | Build, flash, web UI settings, SD updates and board notes |
 
 ## License and disclaimer

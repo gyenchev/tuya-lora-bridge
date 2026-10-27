@@ -1,0 +1,59 @@
+{
+  "profiles": [
+    {
+      "id": "mirabella_genio_doorsen",
+      "name": "Door sensor",
+      "description": "Mirabella Genio; Zigbee door sensor",
+      "detect": {
+        "require": [
+          101
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "binary_sensor",
+          "name": "Door",
+          "dps": [
+            {
+              "id": 101,
+              "type": "boolean",
+              "name": "sensor"
+            }
+          ],
+          "class": "door"
+        },
+        {
+          "entity": "sensor",
+          "name": "Battery",
+          "dps": [
+            {
+              "id": 103,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement",
+              "optional": true
+            }
+          ],
+          "class": "battery",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "binary_sensor",
+          "name": "Tamper",
+          "dps": [
+            {
+              "id": 102,
+              "type": "boolean",
+              "name": "sensor",
+              "optional": true
+            }
+          ],
+          "class": "tamper",
+          "category": "diagnostic"
+        }
+      ]
+    }
+  ]
+}

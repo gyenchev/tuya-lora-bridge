@@ -1,0 +1,77 @@
+{
+  "profiles": [
+    {
+      "id": "shuangri_sr223_solarcon",
+      "name": "Solar water heater (Shuangri SR223)",
+      "description": "Shuangri SR223",
+      "detect": {
+        "require": [
+          26,
+          22,
+          112,
+          107
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Solar collector temperature",
+          "dps": [
+            {
+              "id": 26,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "temperature"
+        },
+        {
+          "entity": "sensor",
+          "name": "Tank temperature",
+          "dps": [
+            {
+              "id": 22,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "temperature"
+        },
+        {
+          "entity": "sensor",
+          "name": "Pump speed",
+          "dps": [
+            {
+              "id": 112,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "rpm"
+            }
+          ]
+        },
+        {
+          "entity": "sensor",
+          "name": "Signal Strength",
+          "dps": [
+            {
+              "id": 107,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "dBm",
+              "class": "measurement"
+            }
+          ],
+          "class": "signal_strength",
+          "category": "diagnostic"
+        }
+      ]
+    }
+  ]
+}

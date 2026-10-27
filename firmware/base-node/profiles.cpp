@@ -865,7 +865,9 @@ bool coerceNumber(const char *text, float &value) {
 }
 
 void normalizeMappingValue(ProfileMapping &mapping, uint8_t entityType,
-                           String &error, const String &path) {
+                           bool primary, String &error, const String &path) {
+  if (!primary) return;
+
   if (entityType == PET_BINARY_SENSOR || entityType == PET_SWITCH) {
     if (mapping.toType == PVT_BOOL) return;
     if (mapping.toType == PVT_INT || mapping.toType == PVT_FLOAT) {
@@ -895,8 +897,9 @@ void normalizeMappingValue(ProfileMapping &mapping, uint8_t entityType,
   }
 }
 
-bool parseMappings(JsonVariant value, uint8_t entityType, ProfileDef &profile,
-                   ProfileDp &dp, String &error, const String &path) {
+bool parseMappings(JsonVariant value, uint8_t entityType, bool primary,
+                   ProfileDef &profile, ProfileDp &dp, String &error,
+                   const String &path) {
   if (value.isNull()) return true;
   if (!value.is<JsonArray>()) {
     error = path + " must be an array";
@@ -962,7 +965,7 @@ bool parseMappings(JsonVariant value, uint8_t entityType, ProfileDef &profile,
       mapping.toType = canonicalTypeForDp(dp.type);
     }
 
-    normalizeMappingValue(mapping, entityType, error, path);
+    normalizeMappingValue(mapping, entityType, primary, error, path);
     if (error.length()) return false;
 
     if (dp.mappingCount == 0) dp.mappingStart = profile.mappingCount;
@@ -1204,8 +1207,8 @@ bool parseGenericDp(JsonVariant value, uint8_t entityType, bool primary,
   if (!parseRange(object["range"], dp, error, path + ".range")) {
     return false;
   }
-  if (!parseMappings(object["mapping"], entityType, profile, dp, error,
-                     path + ".mapping")) {
+  if (!parseMappings(object["mapping"], entityType, primary, profile, dp,
+                     error, path + ".mapping")) {
     return false;
   }
 

@@ -1,0 +1,30 @@
+{
+  "profiles": [
+    {
+      "id": "satisure_power_alarm",
+      "name": "Power outage alarm (Satisure)",
+      "description": "Satisure",
+      "detect": {
+        "require": [
+          101
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "binary_sensor",
+          "name": "Power",
+          "dps": [
+            {
+              "id": 101,
+              "type": "boolean",
+              "name": "sensor"
+            }
+          ],
+          "class": "power",
+          "category": "diagnostic"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "profiles": [
+    {
+      "id": "pni_water_feeeder",
+      "name": "Water feeder (PNI TA-WF-SMART(UV))",
+      "description": "PNI TA-WF-SMART(UV)",
+      "detect": {
+        "require": [
+          1,
+          10,
+          13
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "switch",
+          "name": "Switch",
+          "dps": [
+            {
+              "id": 1,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ],
+          "icon": "mdi:paw"
+        },
+        {
+          "entity": "switch",
+          "name": "Uv Sterilization",
+          "dps": [
+            {
+              "id": 10,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ],
+          "category": "config"
+        },
+        {
+          "entity": "binary_sensor",
+          "name": "Problem",
+          "dps": [
+            {
+              "id": 13,
+              "type": "bitfield",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": 0,
+                  "value": false
+                },
+                {
+                  "value": true
+                }
+              ]
+            },
+            {
+              "id": 13,
+              "type": "bitfield",
+              "name": "fault_code"
+            }
+          ],
+          "class": "problem",
+          "category": "diagnostic"
+        }
+      ]
+    }
+  ]
+}

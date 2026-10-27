@@ -1,0 +1,71 @@
+{
+  "profiles": [
+    {
+      "id": "powerstrip_6outlet_usbs",
+      "name": "6 outlet + 4 USB power strip",
+      "description": "ACME SH3305",
+      "detect": {
+        "require": [
+          1,
+          2,
+          7
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "switch",
+          "name": "Switch X",
+          "dps": [
+            {
+              "id": 1,
+              "type": "boolean",
+              "name": "switch"
+            },
+            {
+              "id": 101,
+              "type": "integer",
+              "name": "countdown"
+            }
+          ],
+          "class": "outlet"
+        },
+        {
+          "entity": "switch",
+          "name": "Switch X",
+          "dps": [
+            {
+              "id": 2,
+              "type": "boolean",
+              "name": "switch"
+            },
+            {
+              "id": 102,
+              "type": "integer",
+              "name": "countdown_2"
+            }
+          ],
+          "class": "outlet"
+        },
+        {
+          "entity": "switch",
+          "name": "USB",
+          "dps": [
+            {
+              "id": 7,
+              "type": "boolean",
+              "name": "switch"
+            },
+            {
+              "id": 105,
+              "type": "integer",
+              "name": "countdown_usb"
+            }
+          ],
+          "class": "switch",
+          "icon": "mdi:usb"
+        }
+      ]
+    }
+  ]
+}

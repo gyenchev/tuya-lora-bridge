@@ -1,0 +1,28 @@
+{
+  "profiles": [
+    {
+      "id": "simple_switch",
+      "name": "Simple switch",
+      "description": "Generated from simple_switch.yaml",
+      "detect": {
+        "require": [
+          1
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "switch",
+          "name": "Switch",
+          "dps": [
+            {
+              "id": 1,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

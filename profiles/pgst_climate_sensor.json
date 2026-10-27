@@ -1,0 +1,183 @@
+{
+  "profiles": [
+    {
+      "id": "pgst_climate_sensor",
+      "name": "Indoor temperature humidity",
+      "description": "Generated from pgst_climate_sensor.yaml",
+      "detect": {
+        "require": [
+          1,
+          2,
+          3,
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Temperature",
+          "dps": [
+            {
+              "id": 1,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement"
+            },
+            {
+              "id": 23,
+              "type": "integer",
+              "name": "unknown_23"
+            },
+            {
+              "id": 24,
+              "type": "integer",
+              "name": "unknown_24"
+            }
+          ],
+          "class": "temperature"
+        },
+        {
+          "entity": "sensor",
+          "name": "Humidity",
+          "dps": [
+            {
+              "id": 2,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement"
+            }
+          ],
+          "class": "humidity"
+        },
+        {
+          "entity": "sensor",
+          "name": "Battery level",
+          "dps": [
+            {
+              "id": 3,
+              "type": "string",
+              "name": "sensor",
+              "unit": "%",
+              "mapping": [
+                {
+                  "dps_val": "low",
+                  "value": 20
+                },
+                {
+                  "dps_val": "middle",
+                  "value": 50
+                },
+                {
+                  "dps_val": "high",
+                  "value": 80
+                }
+              ]
+            }
+          ],
+          "class": "battery"
+        },
+        {
+          "entity": "select",
+          "name": "Temperature Unit",
+          "dps": [
+            {
+              "id": 9,
+              "type": "string",
+              "name": "option",
+              "mapping": [
+                {
+                  "dps_val": "f",
+                  "value": "fahrenheit"
+                },
+                {
+                  "dps_val": "c",
+                  "value": "celsius"
+                }
+              ]
+            }
+          ],
+          "category": "config"
+        },
+        {
+          "entity": "number",
+          "name": "Maximum Temperature",
+          "dps": [
+            {
+              "id": 10,
+              "type": "integer",
+              "name": "value",
+              "unit": "C",
+              "range": {
+                "min": -20,
+                "max": 70
+              }
+            }
+          ],
+          "class": "temperature",
+          "category": "config"
+        },
+        {
+          "entity": "number",
+          "name": "Minimum Temperature",
+          "dps": [
+            {
+              "id": 11,
+              "type": "integer",
+              "name": "value",
+              "unit": "C",
+              "range": {
+                "min": -20,
+                "max": 70
+              }
+            }
+          ],
+          "class": "temperature",
+          "category": "config"
+        },
+        {
+          "entity": "number",
+          "name": "Maximum humidity",
+          "dps": [
+            {
+              "id": 12,
+              "type": "integer",
+              "name": "value",
+              "unit": "%",
+              "range": {
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "class": "humidity",
+          "category": "config"
+        },
+        {
+          "entity": "number",
+          "name": "Minimum humidity",
+          "dps": [
+            {
+              "id": 13,
+              "type": "integer",
+              "name": "value",
+              "unit": "%",
+              "range": {
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "class": "humidity",
+          "category": "config"
+        }
+      ]
+    }
+  ]
+}

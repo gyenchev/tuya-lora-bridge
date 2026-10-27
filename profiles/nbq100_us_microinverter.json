@@ -1,0 +1,121 @@
+{
+  "profiles": [
+    {
+      "id": "nbq100_us_microinverter",
+      "name": "Solar microinverter (Sukflow NBQ800-US)",
+      "description": "Sukflow NBQ800-US",
+      "detect": {
+        "require": [
+          6,
+          101,
+          102,
+          104,
+          105,
+          107,
+          116
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "switch",
+          "name": "Switch",
+          "dps": [
+            {
+              "id": 6,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ]
+        },
+        {
+          "entity": "sensor",
+          "name": "PV Voltage",
+          "dps": [
+            {
+              "id": 101,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "V",
+              "class": "measurement",
+              "scale": 100.0
+            }
+          ],
+          "class": "voltage"
+        },
+        {
+          "entity": "sensor",
+          "name": "PV Current",
+          "dps": [
+            {
+              "id": 102,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "A",
+              "class": "measurement",
+              "scale": 100.0
+            }
+          ],
+          "class": "current"
+        },
+        {
+          "entity": "sensor",
+          "name": "AC Voltage",
+          "dps": [
+            {
+              "id": 104,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "V",
+              "class": "measurement",
+              "scale": 100.0
+            }
+          ],
+          "class": "voltage"
+        },
+        {
+          "entity": "sensor",
+          "name": "AC Current",
+          "dps": [
+            {
+              "id": 105,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "A",
+              "class": "measurement",
+              "scale": 100.0
+            }
+          ],
+          "class": "current"
+        },
+        {
+          "entity": "sensor",
+          "name": "Temperature",
+          "dps": [
+            {
+              "id": 107,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement"
+            }
+          ],
+          "class": "temperature"
+        },
+        {
+          "entity": "sensor",
+          "name": "Frequency",
+          "dps": [
+            {
+              "id": 116,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "Hz"
+            }
+          ],
+          "class": "frequency"
+        }
+      ]
+    }
+  ]
+}

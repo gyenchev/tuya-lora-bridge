@@ -1,0 +1,96 @@
+{
+  "profiles": [
+    {
+      "id": "madimack_gtfreedomi80_p",
+      "name": "Pool cleaning robot",
+      "description": "Madimack GT Freedom i80",
+      "detect": {
+        "require": [
+          104,
+          107,
+          103,
+          108
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "number",
+          "name": "Cleaning duration",
+          "dps": [
+            {
+              "id": 103,
+              "type": "integer",
+              "name": "value",
+              "unit": "min",
+              "range": {
+                "min": 30,
+                "max": 480
+              }
+            }
+          ],
+          "class": "duration",
+          "category": "config"
+        },
+        {
+          "entity": "switch",
+          "name": "Wall cleaning",
+          "dps": [
+            {
+              "id": 104,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ],
+          "category": "config"
+        },
+        {
+          "entity": "sensor",
+          "name": "Battery",
+          "dps": [
+            {
+              "id": 107,
+              "type": "string",
+              "name": "sensor",
+              "unit": "%",
+              "mapping": [
+                {
+                  "dps_val": "0",
+                  "value": 33
+                },
+                {
+                  "dps_val": "1",
+                  "value": 67
+                },
+                {
+                  "dps_val": "2",
+                  "value": 100
+                }
+              ]
+            }
+          ],
+          "class": "battery",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "number",
+          "name": "Repeat interval",
+          "dps": [
+            {
+              "id": 108,
+              "type": "integer",
+              "name": "value",
+              "unit": "h",
+              "range": {
+                "min": 0,
+                "max": 168
+              }
+            }
+          ],
+          "class": "duration",
+          "category": "config"
+        }
+      ]
+    }
+  ]
+}

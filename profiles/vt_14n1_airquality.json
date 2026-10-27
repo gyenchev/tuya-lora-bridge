@@ -1,0 +1,190 @@
+{
+  "profiles": [
+    {
+      "id": "vt_14n1_airquality",
+      "name": "Air quality monitor (VT-14N1)",
+      "description": "VT-14N1",
+      "detect": {
+        "require": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          9
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Air Quality",
+          "dps": [
+            {
+              "id": 1,
+              "type": "string",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": "level_1",
+                  "value": "excellent"
+                },
+                {
+                  "dps_val": "level_2",
+                  "value": "good"
+                },
+                {
+                  "dps_val": "level_3",
+                  "value": "moderate"
+                },
+                {
+                  "dps_val": "level_4",
+                  "value": "poor"
+                },
+                {
+                  "dps_val": "level_5",
+                  "value": "severe"
+                },
+                {
+                  "dps_val": "level_6",
+                  "value": "danger"
+                }
+              ]
+            }
+          ],
+          "class": "enum"
+        },
+        {
+          "entity": "sensor",
+          "name": "Temperature",
+          "dps": [
+            {
+              "id": 2,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "temperature"
+        },
+        {
+          "entity": "sensor",
+          "name": "Humidity",
+          "dps": [
+            {
+              "id": 3,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement"
+            }
+          ],
+          "class": "humidity"
+        },
+        {
+          "entity": "sensor",
+          "name": "Carbon Dioxide",
+          "dps": [
+            {
+              "id": 4,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ppm",
+              "class": "measurement"
+            }
+          ],
+          "class": "carbon_dioxide"
+        },
+        {
+          "entity": "sensor",
+          "name": "HCHO",
+          "dps": [
+            {
+              "id": 5,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ugm3",
+              "class": "measurement"
+            }
+          ],
+          "class": "volatile_organic_compounds"
+        },
+        {
+          "entity": "sensor",
+          "name": "Volatile Organic Compounds",
+          "dps": [
+            {
+              "id": 6,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ugm3",
+              "class": "measurement"
+            }
+          ],
+          "class": "volatile_organic_compounds"
+        },
+        {
+          "entity": "sensor",
+          "name": "Pm25",
+          "dps": [
+            {
+              "id": 7,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ugm3",
+              "class": "measurement"
+            }
+          ],
+          "class": "pm25"
+        },
+        {
+          "entity": "sensor",
+          "name": "Pm10",
+          "dps": [
+            {
+              "id": 9,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ugm3",
+              "class": "measurement"
+            }
+          ],
+          "class": "pm10"
+        },
+        {
+          "entity": "sensor",
+          "name": "Battery",
+          "dps": [
+            {
+              "id": 22,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement"
+            }
+          ],
+          "class": "battery",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "sensor",
+          "name": "Carbon Monoxide",
+          "dps": [
+            {
+              "id": 101,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ppm",
+              "class": "measurement"
+            }
+          ],
+          "class": "carbon_monoxide"
+        }
+      ]
+    }
+  ]
+}

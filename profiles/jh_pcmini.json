@@ -1,0 +1,66 @@
+{
+  "profiles": [
+    {
+      "id": "jh_pcmini",
+      "name": "Pcie computer power (JH-PC mini)",
+      "description": "JH-PC mini",
+      "detect": {
+        "require": [
+          1,
+          101
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "switch",
+          "name": "Outlet",
+          "dps": [
+            {
+              "id": 1,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ],
+          "class": "outlet"
+        },
+        {
+          "entity": "button",
+          "name": "Reset",
+          "dps": [
+            {
+              "id": 101,
+              "type": "string",
+              "name": "button",
+              "mapping": [
+                {
+                  "dps_val": "Reset",
+                  "value": true
+                }
+              ]
+            }
+          ],
+          "icon": "mdi:restart"
+        },
+        {
+          "entity": "button",
+          "name": "Force reset",
+          "dps": [
+            {
+              "id": 101,
+              "type": "string",
+              "name": "button",
+              "mapping": [
+                {
+                  "dps_val": "forceReset",
+                  "value": true
+                }
+              ]
+            }
+          ],
+          "icon": "mdi:restart-alert"
+        }
+      ]
+    }
+  ]
+}

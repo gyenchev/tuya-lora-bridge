@@ -1,0 +1,40 @@
+{
+  "profiles": [
+    {
+      "id": "simple_dual_switch",
+      "name": "Dual switch (eMylo WiFi/RF 2 Gang)",
+      "description": "eMylo WiFi/RF 2 Gang",
+      "detect": {
+        "require": [
+          1,
+          2
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "switch",
+          "name": "Switch X",
+          "dps": [
+            {
+              "id": 1,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ]
+        },
+        {
+          "entity": "switch",
+          "name": "Switch X",
+          "dps": [
+            {
+              "id": 2,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

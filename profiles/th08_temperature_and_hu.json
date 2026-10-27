@@ -1,0 +1,192 @@
+{
+  "profiles": [
+    {
+      "id": "th08_temperature_and_hu",
+      "name": "Temperature and humidity sensor",
+      "description": "Zitech TH08; Zitech TH09B; Zitech TH08BCBU",
+      "detect": {
+        "require": [
+          1,
+          2,
+          3,
+          9
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Temperature",
+          "dps": [
+            {
+              "id": 1,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "temperature"
+        },
+        {
+          "entity": "sensor",
+          "name": "Humidity",
+          "dps": [
+            {
+              "id": 2,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement"
+            }
+          ],
+          "class": "humidity"
+        },
+        {
+          "entity": "sensor",
+          "name": "Battery",
+          "dps": [
+            {
+              "id": 3,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "mapping": [
+                {
+                  "dps_val": "low",
+                  "value": 20
+                },
+                {
+                  "dps_val": "middle",
+                  "value": 50
+                },
+                {
+                  "dps_val": "high",
+                  "value": 80
+                }
+              ]
+            }
+          ],
+          "class": "battery"
+        },
+        {
+          "entity": "sensor",
+          "name": "Power state",
+          "dps": [
+            {
+              "id": 3,
+              "type": "string",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": "low",
+                  "value": "low"
+                },
+                {
+                  "dps_val": "middle",
+                  "value": "middle"
+                },
+                {
+                  "dps_val": "high",
+                  "value": "high"
+                }
+              ]
+            }
+          ],
+          "class": "enum",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "select",
+          "name": "Temperature Unit",
+          "dps": [
+            {
+              "id": 9,
+              "type": "string",
+              "name": "option",
+              "mapping": [
+                {
+                  "dps_val": "f",
+                  "value": "fahrenheit"
+                },
+                {
+                  "dps_val": "c",
+                  "value": "celsius"
+                }
+              ]
+            }
+          ],
+          "category": "config"
+        },
+        {
+          "entity": "number",
+          "name": "Temperature Calibration",
+          "dps": [
+            {
+              "id": 23,
+              "type": "integer",
+              "name": "value",
+              "unit": "C",
+              "range": {
+                "min": -20,
+                "max": 20
+              },
+              "optional": true,
+              "scale": 10.0
+            },
+            {
+              "id": 23,
+              "type": "integer",
+              "name": "available",
+              "optional": true,
+              "mapping": [
+                {
+                  "value": false
+                },
+                {
+                  "value": true
+                }
+              ]
+            }
+          ],
+          "class": "temperature_delta",
+          "category": "config"
+        },
+        {
+          "entity": "number",
+          "name": "Humidity calibration",
+          "dps": [
+            {
+              "id": 24,
+              "type": "integer",
+              "name": "value",
+              "unit": "%",
+              "range": {
+                "min": -10,
+                "max": 10
+              },
+              "optional": true
+            },
+            {
+              "id": 24,
+              "type": "integer",
+              "name": "available",
+              "optional": true,
+              "mapping": [
+                {
+                  "value": false
+                },
+                {
+                  "value": true
+                }
+              ]
+            }
+          ],
+          "category": "config",
+          "icon": "mdi:water-check"
+        }
+      ]
+    }
+  ]
+}

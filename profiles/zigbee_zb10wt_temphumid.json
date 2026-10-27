@@ -1,0 +1,65 @@
+{
+  "profiles": [
+    {
+      "id": "zigbee_zb10wt_temphumid",
+      "name": "Climate sensor (Nedis ZBSC10WT)",
+      "description": "Nedis ZBSC10WT",
+      "detect": {
+        "require": [
+          1,
+          2,
+          4
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Temperature",
+          "dps": [
+            {
+              "id": 1,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "temperature"
+        },
+        {
+          "entity": "sensor",
+          "name": "Humidity",
+          "dps": [
+            {
+              "id": 2,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "humidity"
+        },
+        {
+          "entity": "sensor",
+          "name": "Battery",
+          "dps": [
+            {
+              "id": 4,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "battery",
+          "category": "diagnostic"
+        }
+      ]
+    }
+  ]
+}

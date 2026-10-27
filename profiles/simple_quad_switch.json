@@ -1,0 +1,64 @@
+{
+  "profiles": [
+    {
+      "id": "simple_quad_switch",
+      "name": "Simple switch",
+      "description": "Generated from simple_quad_switch.yaml",
+      "detect": {
+        "require": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "switch",
+          "name": "Switch X",
+          "dps": [
+            {
+              "id": 1,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ]
+        },
+        {
+          "entity": "switch",
+          "name": "Switch X",
+          "dps": [
+            {
+              "id": 2,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ]
+        },
+        {
+          "entity": "switch",
+          "name": "Switch X",
+          "dps": [
+            {
+              "id": 3,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ]
+        },
+        {
+          "entity": "switch",
+          "name": "Switch X",
+          "dps": [
+            {
+              "id": 4,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

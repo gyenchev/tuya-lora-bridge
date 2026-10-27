@@ -1,0 +1,64 @@
+{
+  "profiles": [
+    {
+      "id": "yet_6956wtr_rfcontrolle",
+      "name": "RF controller (YET YET6956WTR-B)",
+      "description": "YET YET6956WTR-B",
+      "detect": {
+        "require": [
+          101,
+          102,
+          103,
+          104
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "button",
+          "name": "A",
+          "dps": [
+            {
+              "id": 101,
+              "type": "boolean",
+              "name": "button"
+            }
+          ]
+        },
+        {
+          "entity": "button",
+          "name": "B",
+          "dps": [
+            {
+              "id": 102,
+              "type": "boolean",
+              "name": "button"
+            }
+          ]
+        },
+        {
+          "entity": "button",
+          "name": "C",
+          "dps": [
+            {
+              "id": 103,
+              "type": "boolean",
+              "name": "button"
+            }
+          ]
+        },
+        {
+          "entity": "button",
+          "name": "D",
+          "dps": [
+            {
+              "id": 104,
+              "type": "boolean",
+              "name": "button"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

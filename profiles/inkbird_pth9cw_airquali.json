@@ -1,0 +1,61 @@
+{
+  "profiles": [
+    {
+      "id": "inkbird_pth9cw_airquali",
+      "name": "Air quality monitor",
+      "description": "Generated from inkbird_pth9cw_airquality.yaml",
+      "detect": {
+        "require": [
+          2,
+          18,
+          19
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Carbon Dioxide",
+          "dps": [
+            {
+              "id": 2,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ppm",
+              "class": "measurement"
+            }
+          ],
+          "class": "carbon_dioxide"
+        },
+        {
+          "entity": "sensor",
+          "name": "Temperature",
+          "dps": [
+            {
+              "id": 18,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement"
+            }
+          ],
+          "class": "temperature"
+        },
+        {
+          "entity": "sensor",
+          "name": "Humidity",
+          "dps": [
+            {
+              "id": 19,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement"
+            }
+          ],
+          "class": "humidity"
+        }
+      ]
+    }
+  ]
+}

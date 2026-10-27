@@ -1,0 +1,57 @@
+{
+  "profiles": [
+    {
+      "id": "grid_connect_double_swi",
+      "name": "Double wall switch",
+      "description": "Generated from grid_connect_double_switch.yaml",
+      "detect": {
+        "require": [
+          1,
+          2
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "switch",
+          "name": "Outlet X",
+          "dps": [
+            {
+              "id": 1,
+              "type": "boolean",
+              "name": "switch"
+            },
+            {
+              "id": 11,
+              "type": "integer",
+              "name": "unknown_11"
+            },
+            {
+              "id": 104,
+              "type": "integer",
+              "name": "unknown_104"
+            },
+            {
+              "id": 105,
+              "type": "boolean",
+              "name": "unknown_105"
+            }
+          ],
+          "class": "switch"
+        },
+        {
+          "entity": "switch",
+          "name": "Outlet X",
+          "dps": [
+            {
+              "id": 2,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ],
+          "class": "switch"
+        }
+      ]
+    }
+  ]
+}

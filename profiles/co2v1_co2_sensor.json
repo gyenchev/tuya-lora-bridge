@@ -1,0 +1,63 @@
+{
+  "profiles": [
+    {
+      "id": "co2v1_co2_sensor",
+      "name": "CO2 sensor",
+      "description": "Generated from co2v1_co2_sensor.yaml",
+      "detect": {
+        "require": [
+          2,
+          18,
+          19
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Carbon Dioxide",
+          "dps": [
+            {
+              "id": 2,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ppm",
+              "class": "measurement"
+            }
+          ],
+          "class": "carbon_dioxide"
+        },
+        {
+          "entity": "sensor",
+          "name": "Temperature",
+          "dps": [
+            {
+              "id": 18,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "temperature"
+        },
+        {
+          "entity": "sensor",
+          "name": "Humidity",
+          "dps": [
+            {
+              "id": 19,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "humidity"
+        }
+      ]
+    }
+  ]
+}

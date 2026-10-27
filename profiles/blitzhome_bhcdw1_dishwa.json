@@ -1,0 +1,99 @@
+{
+  "profiles": [
+    {
+      "id": "blitzhome_bhcdw1_dishwa",
+      "name": "Dishwasher (BlitzHome BH-CDW1)",
+      "description": "BlitzHome BH-CDW1",
+      "detect": {
+        "require": [
+          1,
+          2,
+          6
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "switch",
+          "name": "Switch",
+          "dps": [
+            {
+              "id": 1,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ],
+          "icon": "mdi:dishwasher"
+        },
+        {
+          "entity": "button",
+          "name": "Start",
+          "dps": [
+            {
+              "id": 2,
+              "type": "boolean",
+              "name": "button"
+            }
+          ],
+          "icon": "mdi:play"
+        },
+        {
+          "entity": "button",
+          "name": "Pause",
+          "dps": [
+            {
+              "id": 2,
+              "type": "boolean",
+              "name": "button",
+              "mapping": [
+                {
+                  "dps_val": true,
+                  "value": false
+                },
+                {
+                  "dps_val": false,
+                  "value": true
+                }
+              ]
+            }
+          ],
+          "icon": "mdi:pause"
+        },
+        {
+          "entity": "select",
+          "name": "Washing Mode",
+          "dps": [
+            {
+              "id": 6,
+              "type": "string",
+              "name": "option",
+              "mapping": [
+                {
+                  "dps_val": "biaozhun",
+                  "value": "standard"
+                },
+                {
+                  "dps_val": "chaokuai",
+                  "value": "rapid"
+                },
+                {
+                  "dps_val": "jieneng",
+                  "value": "eco"
+                },
+                {
+                  "dps_val": "qiangli",
+                  "value": "intensive"
+                },
+                {
+                  "dps_val": "guoxian",
+                  "value": "fruit"
+                }
+              ]
+            }
+          ],
+          "category": "config"
+        }
+      ]
+    }
+  ]
+}

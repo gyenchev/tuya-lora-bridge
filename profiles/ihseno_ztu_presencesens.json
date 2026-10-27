@@ -1,0 +1,128 @@
+{
+  "profiles": [
+    {
+      "id": "ihseno_ztu_presencesens",
+      "name": "Presence sensor",
+      "description": "iHseno ZTU 24GHz mmWave WiFi",
+      "detect": {
+        "require": [
+          1,
+          11,
+          9,
+          101,
+          102
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "binary_sensor",
+          "name": "Occupancy",
+          "dps": [
+            {
+              "id": 1,
+              "type": "string",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": "pir",
+                  "value": true
+                },
+                {
+                  "value": false
+                }
+              ]
+            }
+          ],
+          "class": "occupancy"
+        },
+        {
+          "entity": "select",
+          "name": "Motion Sensitivity",
+          "dps": [
+            {
+              "id": 9,
+              "type": "string",
+              "name": "option",
+              "mapping": [
+                {
+                  "dps_val": "low",
+                  "value": "low"
+                },
+                {
+                  "dps_val": "middle",
+                  "value": "medium"
+                },
+                {
+                  "dps_val": "high",
+                  "value": "high"
+                }
+              ]
+            }
+          ],
+          "category": "config"
+        },
+        {
+          "entity": "sensor",
+          "name": "Illuminance",
+          "dps": [
+            {
+              "id": 11,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "lx",
+              "class": "measurement"
+            }
+          ],
+          "class": "illuminance"
+        },
+        {
+          "entity": "select",
+          "name": "Presence sensitivity",
+          "dps": [
+            {
+              "id": 101,
+              "type": "string",
+              "name": "option",
+              "mapping": [
+                {
+                  "dps_val": "low",
+                  "value": "Low"
+                },
+                {
+                  "dps_val": "middle",
+                  "value": "Medium"
+                },
+                {
+                  "dps_val": "high",
+                  "value": "High"
+                }
+              ]
+            }
+          ],
+          "category": "config",
+          "icon": "mdi:motion-sensor"
+        },
+        {
+          "entity": "number",
+          "name": "Presence timeout",
+          "dps": [
+            {
+              "id": 102,
+              "type": "integer",
+              "name": "value",
+              "unit": "s",
+              "range": {
+                "min": 10,
+                "max": 600
+              }
+            }
+          ],
+          "class": "duration",
+          "category": "config",
+          "icon": "mdi:camera-timer"
+        }
+      ]
+    }
+  ]
+}

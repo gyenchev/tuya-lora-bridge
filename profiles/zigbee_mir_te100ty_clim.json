@@ -1,0 +1,65 @@
+{
+  "profiles": [
+    {
+      "id": "zigbee_mir_te100ty_clim",
+      "name": "Climate sensor",
+      "description": "MultiIR Zigbee TE100-TY",
+      "detect": {
+        "require": [
+          101,
+          103,
+          102
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Humidity",
+          "dps": [
+            {
+              "id": 101,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement",
+              "scale": 100.0
+            }
+          ],
+          "class": "humidity"
+        },
+        {
+          "entity": "sensor",
+          "name": "Temperature",
+          "dps": [
+            {
+              "id": 103,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement",
+              "scale": 100.0
+            }
+          ],
+          "class": "temperature"
+        },
+        {
+          "entity": "sensor",
+          "name": "Battery",
+          "dps": [
+            {
+              "id": 102,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement",
+              "scale": 5.0
+            }
+          ],
+          "class": "battery",
+          "category": "diagnostic"
+        }
+      ]
+    }
+  ]
+}

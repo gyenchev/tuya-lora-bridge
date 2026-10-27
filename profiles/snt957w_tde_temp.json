@@ -1,0 +1,143 @@
+{
+  "profiles": [
+    {
+      "id": "snt957w_tde_temp",
+      "name": "Temperature sensor (SNT957W-TDE)",
+      "description": "SNT957W-TDE",
+      "detect": {
+        "require": [
+          1,
+          11,
+          14,
+          23
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Temperature",
+          "dps": [
+            {
+              "id": 1,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "temperature"
+        },
+        {
+          "entity": "select",
+          "name": "Temperature Unit",
+          "dps": [
+            {
+              "id": 9,
+              "type": "string",
+              "name": "option",
+              "optional": true,
+              "mapping": [
+                {
+                  "dps_val": "f",
+                  "value": "fahrenheit"
+                },
+                {
+                  "dps_val": "c",
+                  "value": "celsius"
+                }
+              ]
+            }
+          ],
+          "category": "config"
+        },
+        {
+          "entity": "number",
+          "name": "Maximum Temperature",
+          "dps": [
+            {
+              "id": 10,
+              "type": "integer",
+              "name": "value",
+              "unit": "C",
+              "range": {
+                "min": -400,
+                "max": 1200
+              },
+              "optional": true,
+              "scale": 10.0
+            }
+          ],
+          "class": "temperature",
+          "category": "config"
+        },
+        {
+          "entity": "number",
+          "name": "Minimum Temperature",
+          "dps": [
+            {
+              "id": 11,
+              "type": "integer",
+              "name": "value",
+              "unit": "C",
+              "range": {
+                "min": -400,
+                "max": 1200
+              },
+              "scale": 10.0
+            }
+          ],
+          "class": "temperature",
+          "category": "config"
+        },
+        {
+          "entity": "select",
+          "name": "Temperature alarm",
+          "dps": [
+            {
+              "id": 14,
+              "type": "string",
+              "name": "option",
+              "mapping": [
+                {
+                  "dps_val": "loweralarm",
+                  "value": "Low temperature"
+                },
+                {
+                  "dps_val": "upperalarm",
+                  "value": "High temperature"
+                },
+                {
+                  "dps_val": "cancel",
+                  "value": "Not set"
+                }
+              ]
+            }
+          ],
+          "category": "config",
+          "icon": "mdi:thermometer-alert"
+        },
+        {
+          "entity": "number",
+          "name": "Temperature Calibration",
+          "dps": [
+            {
+              "id": 23,
+              "type": "integer",
+              "name": "value",
+              "unit": "C",
+              "range": {
+                "min": -100,
+                "max": 100
+              },
+              "scale": 10.0
+            }
+          ],
+          "class": "temperature_delta",
+          "category": "config"
+        }
+      ]
+    }
+  ]
+}

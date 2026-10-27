@@ -1,0 +1,31 @@
+{
+  "profiles": [
+    {
+      "id": "co2_box",
+      "name": "CO2 box (DCR-CO2)",
+      "description": "DCR-CO2",
+      "detect": {
+        "require": [
+          2
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Carbon Dioxide",
+          "dps": [
+            {
+              "id": 2,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "ppm",
+              "class": "measurement"
+            }
+          ],
+          "class": "carbon_dioxide"
+        }
+      ]
+    }
+  ]
+}

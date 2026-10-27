@@ -1,0 +1,131 @@
+{
+  "profiles": [
+    {
+      "id": "pir_sensor_alarm",
+      "name": "PIR sensor alarm",
+      "description": "Generated from pir_sensor_alarm.yaml",
+      "detect": {
+        "require": [
+          1,
+          104,
+          103,
+          4,
+          102,
+          105
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "binary_sensor",
+          "name": "Motion",
+          "dps": [
+            {
+              "id": 1,
+              "type": "string",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": "pir",
+                  "value": true
+                },
+                {
+                  "value": false
+                }
+              ]
+            }
+          ],
+          "class": "motion"
+        },
+        {
+          "entity": "switch",
+          "name": "Armed",
+          "dps": [
+            {
+              "id": 104,
+              "type": "boolean",
+              "name": "switch"
+            }
+          ],
+          "icon": "mdi:shield-home"
+        },
+        {
+          "entity": "binary_sensor",
+          "name": "Battery Charging",
+          "dps": [
+            {
+              "id": 103,
+              "type": "boolean",
+              "name": "sensor"
+            }
+          ],
+          "class": "battery_charging",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "sensor",
+          "name": "Battery",
+          "dps": [
+            {
+              "id": 4,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%"
+            }
+          ],
+          "class": "battery"
+        },
+        {
+          "entity": "number",
+          "name": "Alarm time",
+          "dps": [
+            {
+              "id": 102,
+              "type": "integer",
+              "name": "value",
+              "unit": "s",
+              "range": {
+                "min": 0,
+                "max": 255
+              }
+            }
+          ],
+          "class": "duration",
+          "category": "config",
+          "icon": "mdi:alarm"
+        },
+        {
+          "entity": "select",
+          "name": "Warning mode",
+          "dps": [
+            {
+              "id": 105,
+              "type": "string",
+              "name": "option",
+              "mapping": [
+                {
+                  "dps_val": "SoundLight_mode",
+                  "value": "Sound and Light"
+                },
+                {
+                  "dps_val": "OnlyLight_mode",
+                  "value": "Only Light"
+                },
+                {
+                  "dps_val": "OnlySound_mode",
+                  "value": "Only Sound"
+                },
+                {
+                  "dps_val": "Mute_mode",
+                  "value": "No Sound no Light"
+                }
+              ]
+            }
+          ],
+          "category": "config",
+          "icon": "mdi:cog"
+        }
+      ]
+    }
+  ]
+}

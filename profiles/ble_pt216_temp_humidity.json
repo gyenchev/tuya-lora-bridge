@@ -1,0 +1,121 @@
+{
+  "profiles": [
+    {
+      "id": "ble_pt216_temp_humidity",
+      "name": "Temperature and humidity sensor",
+      "description": "PT216 / PT19DB-2",
+      "detect": {
+        "require": [
+          1,
+          2,
+          4,
+          17,
+          19,
+          20
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Temperature",
+          "dps": [
+            {
+              "id": 1,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "C",
+              "class": "measurement",
+              "scale": 10.0
+            }
+          ],
+          "class": "temperature"
+        },
+        {
+          "entity": "sensor",
+          "name": "Humidity",
+          "dps": [
+            {
+              "id": 2,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement"
+            }
+          ],
+          "class": "humidity"
+        },
+        {
+          "entity": "sensor",
+          "name": "Battery",
+          "dps": [
+            {
+              "id": 4,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%",
+              "class": "measurement"
+            }
+          ],
+          "class": "battery",
+          "category": "diagnostic"
+        },
+        {
+          "entity": "number",
+          "name": "Report interval",
+          "dps": [
+            {
+              "id": 17,
+              "type": "integer",
+              "name": "value",
+              "unit": "s",
+              "range": {
+                "min": 5,
+                "max": 60
+              }
+            }
+          ],
+          "category": "config",
+          "icon": "mdi:clock"
+        },
+        {
+          "entity": "number",
+          "name": "Temperature sensitivity",
+          "dps": [
+            {
+              "id": 19,
+              "type": "integer",
+              "name": "value",
+              "unit": "C",
+              "range": {
+                "min": 1,
+                "max": 10
+              },
+              "scale": 10.0
+            }
+          ],
+          "category": "config",
+          "icon": "mdi:thermometer"
+        },
+        {
+          "entity": "number",
+          "name": "Humidity sensitivity",
+          "dps": [
+            {
+              "id": 20,
+              "type": "integer",
+              "name": "value",
+              "unit": "%",
+              "range": {
+                "min": 3,
+                "max": 10
+              }
+            }
+          ],
+          "category": "config",
+          "icon": "mdi:water-percent"
+        }
+      ]
+    }
+  ]
+}

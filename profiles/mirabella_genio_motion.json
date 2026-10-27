@@ -1,0 +1,66 @@
+{
+  "profiles": [
+    {
+      "id": "mirabella_genio_motion",
+      "name": "Motion sensor (Mirabella Genio)",
+      "description": "Mirabella Genio",
+      "detect": {
+        "require": [
+          101,
+          103,
+          104
+        ],
+        "priority": 5
+      },
+      "entities": [
+        {
+          "entity": "binary_sensor",
+          "name": "Motion",
+          "dps": [
+            {
+              "id": 101,
+              "type": "string",
+              "name": "sensor",
+              "mapping": [
+                {
+                  "dps_val": "pir",
+                  "value": true
+                },
+                {
+                  "dps_val": "none",
+                  "value": false
+                }
+              ]
+            }
+          ],
+          "class": "motion"
+        },
+        {
+          "entity": "sensor",
+          "name": "Battery",
+          "dps": [
+            {
+              "id": 103,
+              "type": "integer",
+              "name": "sensor",
+              "unit": "%"
+            }
+          ],
+          "class": "battery"
+        },
+        {
+          "entity": "binary_sensor",
+          "name": "Tamper alarm",
+          "dps": [
+            {
+              "id": 104,
+              "type": "boolean",
+              "name": "sensor"
+            }
+          ],
+          "class": "tamper"
+        }
+      ]
+    }
+  ]
+}
