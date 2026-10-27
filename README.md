@@ -6,16 +6,17 @@
 
 # Tuya LoRa Bridge
 
-A two-node ESP32 bridge that carries a Tuya local API over LoRa to Home
+A two-node ESP32 bridge that carries a Tuya local DP stream over LoRa to Home
 Assistant. The bridge is designed for locations where the Tuya device cannot
 reach the home WiFi, but it does not modify the device or its mains wiring.
 
-The original reference implementation targets a Feyree three-phase EV charger,
-but that scope can change at any time. The radio link, Tuya proxy, MQTT layer
-and Home Assistant integration are generic; the DP map is device-specific and
-is kept on the base node.
+The remote node is a raw Tuya DP proxy. The base node owns the DP-to-entity map,
+so many common Tuya devices can be described with a tuya-local-style JSON
+descriptor without changing the firmware. Built-in Feyree and F-OBZ2 profiles
+are provided as compatibility examples and can be replaced by custom
+descriptors.
 
-- **Firmware version:** 0.2.1
+- **Firmware version:** 0.3.0
 - **Radio band:** 868 MHz (EU)
 - **LoRa link:** AES-128-GCM authenticated and encrypted
 - **Home Assistant:** MQTT discovery, no custom integration
@@ -27,9 +28,9 @@ It discovers the device on that AP, speaks the Tuya local TCP protocol on port
 `6668`, and acts as a raw data-point proxy over LoRa. It does not interpret the
 DP map.
 
-The base node joins the home WiFi, owns the DP map, publishes MQTT state and
-Home Assistant discovery, and turns MQTT commands into Tuya DP writes. The
-charger stays on its own local protections and schedules.
+The base node joins the home WiFi, owns the DP-to-entity map, publishes MQTT
+state and Home Assistant discovery, and turns MQTT commands into Tuya DP writes.
+The Tuya device stays on its own local protections and schedules.
 
 ```text
  Tuya device                     Remote node                  Base node
@@ -53,7 +54,23 @@ charger stays on its own local protections and schedules.
 - AES-128-GCM encrypted LoRa frames with `boot_id` and sequence replay
   protection.
 - Retained MQTT state, raw DP snapshot, availability and link diagnostics.
-- Home Assistant MQTT discovery for monitoring and control entities.
+- Browser-side profile catalog covering the complete tuya-local descriptor
+  collection (1,779 devices at the pinned commit), grouped by device type and
+  converted in the browser to precompiled Home Assistant MQTT discovery packs.
+- Native MQTT entities for lights, fans, covers, climate, water heaters,
+  humidifiers, locks, alarms, sirens, valves, events, time/datetime,
+  lawn mowers, cameras, sensors, binary sensors, switches, numbers, selects,
+  buttons and text entities. Vacuums, media players and Tuya remotes/infrared
+  emitters are decomposed into standard MQTT controls and sensors.
+- A raw-DP sensor exposes every DP as an attribute, so no DP is hidden even
+  when a platform cannot express it natively.
+- Profile-driven **Device telemetry** on the status page, with a raw-DP fallback;
+  the top status tiles are limited to link/profile data and the base OLED shows
+  device availability and the active profile instead of charger-only rows.
+- Streaming profile-pack storage (metadata + one small file per discovery
+  entity) in a 384 KB LittleFS partition; no single-JSON pack memory ceiling.
+- Offline charger catalog (15 pre-converted packs) plus the three built-in
+  Feyree and F-OBZ2 fallback profiles with stable entity IDs.
 - Web UI for all runtime settings; settings are stored in ESP32 NVS.
 - OLED status display on both nodes.
 - SD-card firmware updates for both nodes.
@@ -87,19 +104,40 @@ tuya-lora-bridge/
 │   ├── network-and-pairing.md
 │   ├── testing.md
 │   └── tuya-device.md
+├── web/
+│   ├── README.md
+│   ├── profile_builder.html
+│   ├── profile_converter.mjs
+│   ├── profile_mapping.mjs
+│   ├── build_assets.mjs
+│   ├── catalog.json
+│   ├── offline_chargers.json
+│   ├── package.json
+│   └── package-lock.json
 └── firmware/
     ├── README.md
     ├── base-node/
     │   ├── base-node.ino
     │   ├── boot_guard.cpp
     │   ├── boot_guard.h
+    │   ├── browser_profile.cpp
+    │   ├── browser_profile.h
     │   ├── config.h
     │   ├── config_store.cpp
     │   ├── config_store.h
+    │   ├── entities.cpp
+    │   ├── entities.h
+    │   ├── ha_discovery.cpp
+    │   ├── ha_discovery.h
     │   ├── lora_protocol.cpp
     │   ├── lora_protocol.h
+    │   ├── partitions.csv
+    │   ├── profiles.cpp
+    │   ├── profiles.h
     │   ├── sd_update.cpp
     │   ├── sd_update.h
+    │   ├── web_assets.cpp
+    │   ├── web_assets.h
     │   ├── web_ui.cpp
     │   └── web_ui.h
     └── remote-node/
@@ -128,18 +166,21 @@ identical.
 ### 1. Build and flash
 
 Use Arduino ESP32 core 3.1.0 and the libraries listed in
-[`firmware/README.md`](firmware/README.md).
+[`firmware/README.md`](firmware/README.md). The base sketch contains its own
+`partitions.csv` (two 1.75 MB OTA app partitions and 384 KB LittleFS), so the
+partition scheme selected by the FQBN is overridden by the custom table.
 
 ```bash
-FQBN=esp32:esp32:ttgo-lora32:UploadSpeed=460800
+REMOTE_FQBN=esp32:esp32:ttgo-lora32:UploadSpeed=460800
+BASE_FQBN=esp32:esp32:ttgo-lora32:PartitionScheme=min_spiffs,UploadSpeed=460800
 PORT=/dev/cu.usbserial-REPLACE_ME
 LIBS="$HOME/Documents/Arduino/libraries"
 
-arduino-cli compile --fqbn "$FQBN" --libraries "$LIBS" firmware/remote-node
-arduino-cli upload  --fqbn "$FQBN" --libraries "$LIBS" -p "$PORT" firmware/remote-node
+arduino-cli compile --fqbn "$REMOTE_FQBN" --libraries "$LIBS" firmware/remote-node
+arduino-cli upload  --fqbn "$REMOTE_FQBN" --libraries "$LIBS" -p "$PORT" firmware/remote-node
 
-arduino-cli compile --fqbn "$FQBN" --libraries "$LIBS" firmware/base-node
-arduino-cli upload  --fqbn "$FQBN" --libraries "$LIBS" -p "$PORT" firmware/base-node
+arduino-cli compile --fqbn "$BASE_FQBN" --libraries "$LIBS" firmware/base-node
+arduino-cli upload  --fqbn "$BASE_FQBN" --libraries "$LIBS" -p "$PORT" firmware/base-node
 ```
 
 When a node has no saved configuration, it starts a setup AP:
@@ -184,11 +225,17 @@ Connect to the base node's `TuyaLoraBase-Setup` AP (default password
 - MQTT broker host, port and credentials;
 - the same LoRa PSK and radio settings as the remote node;
 - Home Assistant device name and discovery prefix;
+- the **Profile** tab: auto-detect, a built-in profile, or a custom JSON profile;
 - optional timing and control limits.
 
-The base node publishes Home Assistant discovery automatically. The device name
-and identifier can be changed later; keep the identifier stable to avoid
-creating a second Home Assistant device.
+The Profile tab also shows the active, detected and match state from the last DP
+snapshot. Built-in compatibility profiles are `3-phase`, `single-phase` and
+`F-OBZ2`; custom profiles are limited to four entries and remain in NVS, not in
+the repository. A generic custom profile describes Home Assistant entities in a
+tuya-local-style `entities` list; the base then publishes discovery and state for
+those entities automatically. The base node publishes Home Assistant discovery
+automatically. The device name and identifier can be changed later; keep the
+identifier stable to avoid creating a second Home Assistant device.
 
 ### 5. Verify
 
@@ -211,7 +258,8 @@ update, and Home Assistant should create the entities described in
 
 All network, MQTT, Tuya and LoRa credentials are runtime settings stored in
 ESP32 NVS and edited through the node web UI. The firmware does not compile in
-credentials.
+credentials. The selected DP profile and any custom profile JSON are also stored
+in NVS, so changing devices does not require rebuilding the base firmware.
 
 - Base status: `http://<base-ip>/`
 - Base settings: `http://<base-ip>/settings`
@@ -239,33 +287,38 @@ Keep the card inserted until the update finishes.
 ## Home Assistant
 
 The base node publishes ordinary MQTT topics and retained discovery configs.
-There is no custom component. The main topics are:
+There is no custom component. The default topics keep the `charger` segment for
+backward compatibility; they are configurable in the base web UI. The main
+topics are:
 
 | Topic | Purpose |
 |---|---|
 | `tuya-lora/charger/state` | mapped state JSON |
+| `tuya-lora/charger/state/entities/e0` … `e9` | per-entity state for generic profiles |
 | `tuya-lora/charger/link` | RSSI, SNR, age and last-seen diagnostics |
 | `tuya-lora/charger/dps` | raw Tuya DP snapshot |
 | `tuya-lora/charger/availability` | `online` / `offline` |
-| `tuya-lora/charger/command/*` | control and query commands |
+| `tuya-lora/charger/command/*` | legacy control and query commands |
+| `tuya-lora/charger/command/generic/e0` … `e9` | per-entity commands for generic profiles |
 | `tuya-lora/charger/command/result` | command result |
 
-The default entity prefix is `tuya_<device-name>_<suffix>`. See
-[`docs/home-assistant.md`](docs/home-assistant.md) for the entity list, payloads,
-automations and troubleshooting.
+The default entity prefix is `tuya_<device-name>_<suffix>`. Generic profile
+entities use `tuya_<device-name>_profile_e0` and similar stable suffixes.
+See [`docs/home-assistant.md`](docs/home-assistant.md) for the entity list,
+payloads, automations and troubleshooting.
 
 ## Safety
 
 This project does not open the device or touch its mains wiring. It uses only
 the Tuya network API.
 
-- The device's RCD/RCBO, control pilot and local protections remain
-  authoritative.
+- The device's own protections remain authoritative. For an EV charger, this
+  includes the RCD/RCBO, control pilot and local protections.
 - Do not bypass or modify protective earth, RCD/RCBO, CP or PP circuits.
 - Do not use a DIY relay or contactor to interrupt mains.
 - The bridge must never be the only safeguard against an unsafe condition.
-- Control is intentionally limited to slow monitoring and charging control;
-  it is not a real-time load-balancing system.
+- Control is intentionally limited to slow monitoring and the controls exposed
+  by the active profile; it is not a real-time load-balancing system.
 
 See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 
@@ -285,8 +338,31 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 
 ## Scope and limitations
 
-- The included DP map targets a Feyree three-phase charger. Other Tuya devices
-  need their own DP map and control profile.
+- The browser catalog covers all 1,779 descriptors in the pinned tuya-local
+  collection. Every descriptor converts; there is no “milestone”/unsupported
+  status in the catalog.
+- Native MQTT platforms are generated for light, fan, cover, climate,
+  water_heater, humidifier, lock, alarm_control_panel, siren, valve,
+  event, time, datetime, lawn_mower, camera, sensor, binary_sensor, switch,
+  number, select, button and text. Vacuums, media players, Tuya remotes and
+  infrared emitters are decomposed into standard MQTT switch/number/select/
+  button/text/sensor/event entities.
+- The raw-DP sensor is always published in pack mode and exposes every DP as an
+  attribute. All remaining DPs are therefore available even when a platform
+  cannot represent them natively.
+- The built-in `3-phase`, `single-phase` and `F-OBZ2` profiles keep their
+  existing legacy state/control model and Home Assistant entity IDs.
+- Profile packs are uploaded as NDJSON and stored as metadata plus one small
+  file per discovery entity in LittleFS. The base accepts uploads up to 250 KB,
+  up to 256 discovery entities, and 24 KB per discovery item. The custom
+  `partitions.csv` gives LittleFS 384 KB and two 1.75 MB OTA app partitions.
+- The online catalog requires browser internet access (GitHub raw + js-yaml
+  CDN). The offline catalog and the three built-ins work without internet.
+- The legacy custom JSON editor remains for manual compact profiles (four
+  profiles, 8192 bytes); it is no longer the recommended path.
+- One Tuya device is supported per bridge. Simultaneous multi-device support is
+  not implemented.
+- Raw DP snapshots are capped at 2560 bytes (32 LoRa chunks of 80 bytes).
 - The base node publishes a full snapshot every 60 seconds. Commands add an
   immediate refresh, but this is not a real-time control link.
 - Most Tuya devices accept one local TCP client at a time. Close the Tuya app or
@@ -302,11 +378,12 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | Topology, node responsibilities, data flow and design constraints |
 | [`docs/network-and-pairing.md`](docs/network-and-pairing.md) | AP setup, Tuya pairing, discovery and connectivity checks |
-| [`docs/tuya-device.md`](docs/tuya-device.md) | Tuya local API, key retrieval and reference DP maps |
+| [`docs/tuya-device.md`](docs/tuya-device.md) | Tuya local API, key retrieval, reference DP maps, generic entity descriptors and the legacy custom schema |
 | [`docs/lora-protocol.md`](docs/lora-protocol.md) | Frame format, messages, ACKs, encryption and airtime |
 | [`docs/home-assistant.md`](docs/home-assistant.md) | MQTT topics, discovery, entities, automations and dashboards |
 | [`docs/hardware-safety.md`](docs/hardware-safety.md) | BOM, power, enclosure, radio rules and EVSE safety |
 | [`docs/testing.md`](docs/testing.md) | Validation matrix, acceptance checks and known limitations |
+| [`web/README.md`](web/README.md) | Browser profile catalog, converter, catalog generation and offline packs |
 | [`firmware/README.md`](firmware/README.md) | Build, flash, web UI settings, SD updates and board notes |
 
 ## License and disclaimer
@@ -316,9 +393,9 @@ copy, modify, publish, use, compile, sell, or distribute it for any purpose,
 commercial or non-commercial, without attribution. See [`LICENSE`](LICENSE).
 
 This project is **100% vibecoded / AI-generated** and is not a certified
-controller or safety device for any application. It was originally intended to
-interact with an EV charger, but that scope can change at any time. The author
-is not responsible for any damage to hardware, software, property, or persons.
-Use it at your own risk and read [`DISCLAIMER.md`](DISCLAIMER.md). Use it only
-with equipment that keeps its own safety and protective functions, and have any
-mains installation checked by a qualified electrician.
+controller or safety device for any application. It can control EV chargers and
+other Tuya devices, but the supported profile set can change at any time. The
+author is not responsible for any damage to hardware, software, property, or
+persons. Use it at your own risk and read [`DISCLAIMER.md`](DISCLAIMER.md). Use
+it only with equipment that keeps its own safety and protective functions, and
+have any mains installation checked by a qualified electrician.

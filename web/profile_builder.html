@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tuya LoRa — Profile catalog</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px; font: 16px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background: #f7f7f8; color: #17181b; }
+  main { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  h2 { font-size: 1.15rem; margin: 24px 0 8px; }
+  p { margin: 6px 0; }
+  a { color: #0969da; }
+  .muted { opacity: .7; font-size: .92rem; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  input[type=search], input[type=url] { flex: 1; min-width: 220px; padding: 9px 11px; border: 1px solid #8886; border-radius: 8px; background: transparent; color: inherit; font: inherit; }
+  button { padding: 9px 13px; border: 1px solid #8886; border-radius: 8px; background: #fff; color: #17181b; font: inherit; cursor: pointer; }
+  button.primary { background: #0969da; border-color: #0969da; color: #fff; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  details { border: 1px solid #8884; border-radius: 10px; margin: 8px 0; background: #fff; }
+  summary { cursor: pointer; padding: 10px 12px; font-weight: 650; }
+  .item { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 9px 12px; border-top: 1px solid #8882; }
+  .item:first-of-type { border-top: 0; }
+  .item .meta { min-width: 0; }
+  .item .name { font-weight: 600; }
+  .item .sub { font-size: .82rem; opacity: .65; overflow-wrap: anywhere; }
+  .badge { font-size: .72rem; padding: 2px 6px; border-radius: 999px; background: #8882; }
+  .badge.ok { background: #1f883d22; color: #1a7f37; }
+  .badge.no { background: #cf222e22; color: #cf222e; }
+  .status { margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: #8881; white-space: pre-wrap; }
+  .status.err { background: #cf222e18; color: #cf222e; }
+  .preview { border: 1px solid #8884; border-radius: 10px; padding: 12px; background: #fff; }
+  .preview ul { margin: 8px 0 0 18px; padding: 0; }
+  .preview li { margin: 3px 0; }
+  code { font: .85em ui-monospace, SFMono-Regular, Menlo, monospace; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #111214; color: #e8e8ea; }
+    button, details, .preview { background: #1a1c20; color: inherit; }
+    button.primary { background: #2f81f7; border-color: #2f81f7; }
+    a { color: #6cb6ff; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Profile catalog</h1>
+  <p class="muted">Browse tuya-local device descriptors and save one precompiled profile to the base. Only the selected profile is stored on the ESP32.</p>
+  <div id="base-info" class="status">Connecting to the base…</div>
+
+  <div class="row">
+    <input id="search" type="search" placeholder="Search device, brand or model…" autocomplete="off">
+    <button id="reload-offline" type="button">Reload offline catalog</button>
+  </div>
+
+  <div class="row">
+    <input id="catalog-url" type="url" spellcheck="false" value="https://raw.githubusercontent.com/gyenchev/tuya-lora-bridge/refs/heads/main/web/catalog.json">
+    <button id="load-online" class="primary" type="button">Load online catalog</button>
+  </div>
+  <p class="muted">The online catalog and YAML are fetched from GitHub. The offline catalog is served by the base and works without internet.</p>
+
+  <div id="status" class="status" hidden></div>
+
+  <section>
+    <h2>Offline charger catalog</h2>
+    <div id="offline"></div>
+  </section>
+
+  <section>
+    <h2>Online tuya-local catalog</h2>
+    <div id="online"></div>
+  </section>
+
+  <section id="preview" hidden>
+    <h2>Preview</h2>
+    <div id="preview-body" class="preview"></div>
+    <div class="row"><button id="save" class="primary" type="button">Save to base</button></div>
+  </section>
+</main>
+
+<script type="module">
+import { buildPack } from '/profile_converter.mjs';
+
+const $ = (id) => document.getElementById(id);
+let info = null;
+let offlinePacks = [];
+let catalog = null;
+let currentPack = null;
+let yamlLib = null;
+
+function setStatus(message, isError = false) {
+  const box = $('status');
+  box.hidden = !message;
+  box.textContent = message;
+  box.classList.toggle('err', Boolean(isError));
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+async function fetchJson(url, options) {
+  const response = await fetch(url, { cache: 'no-store', ...options });
+  const text = await response.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch {}
+  if (!response.ok) throw new Error(data?.error || text || `HTTP ${response.status}`);
+  return data;
+}
+
+async function loadBaseInfo() {
+  info = await fetchJson('/api/profile/info');
+  const pack = info.pack
+    ? ` · active pack: ${escapeHtml(info.pack.name)} (${escapeHtml(info.pack.id)})`
+    : '';
+  $('base-info').innerHTML =
+    `<strong>${escapeHtml(info.ha_name || 'Base')}</strong> · state: <code>${escapeHtml(info.state_topic)}</code> · command: <code>${escapeHtml(info.command_topic)}</code>${pack}`;
+}
+
+function materialize(pack) {
+  if (!info) throw new Error('base info is not loaded');
+  const text = JSON.stringify(pack)
+    .replaceAll('__STATE_TOPIC__', info.state_topic)
+    .replaceAll('__CMD_TOPIC__', info.command_topic)
+    .replaceAll('__RAW_ENTITY__', info.raw_entity_id);
+  return JSON.parse(text);
+}
+
+function showPreview(pack, sourceLabel) {
+  currentPack = pack;
+  const size = JSON.stringify(pack).length;
+  const items = pack.discovery.map((item) => {
+    const name = item.config?.name || item.component;
+    return `<li><code>${escapeHtml(item.component)}</code> ${escapeHtml(name)}</li>`;
+  }).join('');
+  const warnings = (pack.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join('');
+  $('preview-body').innerHTML =
+    `<p><strong>${escapeHtml(pack.name)}</strong> <span class="badge">${escapeHtml(pack.device_type || 'Device')}</span></p>
+     <p class="muted">${escapeHtml(sourceLabel || pack.source || '')}</p>
+     <p class="muted">${pack.discovery.length} entities · ${size} bytes</p>
+     ${warnings ? `<p class="muted">Notes:</p><ul>${warnings}</ul>` : ''}
+     <ul>${items}</ul>`;
+  $('preview').hidden = false;
+  $('preview').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function makeItem({ title, subtitle, badge, disabled, action }) {
+  const row = document.createElement('div');
+  row.className = 'item';
+  row.innerHTML = `<div class="meta"><div class="name">${escapeHtml(title)}</div><div class="sub">${escapeHtml(subtitle || '')}</div></div>`;
+  if (badge) {
+    const span = document.createElement('span');
+    span.className = `badge ${badge.ok ? 'ok' : 'no'}`;
+    span.textContent = badge.label;
+    row.appendChild(span);
+  }
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = 'Use';
+  button.disabled = Boolean(disabled);
+  button.addEventListener('click', action);
+  row.appendChild(button);
+  return row;
+}
+
+function renderOffline() {
+  const host = $('offline');
+  host.innerHTML = '';
+  if (!offlinePacks.length) {
+    host.innerHTML = '<p class="muted">No offline charger packs were found on the base.</p>';
+    return;
+  }
+  const details = document.createElement('details');
+  details.open = true;
+  details.innerHTML = `<summary>Chargers (${offlinePacks.length})</summary>`;
+  for (const pack of offlinePacks) {
+    details.appendChild(makeItem({
+      title: pack.name,
+      subtitle: `${pack.id} · ${pack.discovery.length} entities`,
+      badge: { label: 'offline', ok: true },
+      action: () => {
+        try {
+          showPreview(materialize(pack), 'Offline charger catalog');
+        } catch (error) {
+          setStatus(error.message, true);
+        }
+      },
+    }));
+  }
+  host.appendChild(details);
+}
+
+function renderOnline() {
+  const host = $('online');
+  host.innerHTML = '';
+  if (!catalog) {
+    host.innerHTML = '<p class="muted">Load the online catalog to browse tuya-local devices.</p>';
+    return;
+  }
+  const query = $('search').value.trim().toLowerCase();
+  const groups = new Map();
+  for (const profile of catalog.profiles) {
+    if (query && !`${profile.name} ${profile.id} ${profile.file} ${profile.group}`.toLowerCase().includes(query)) continue;
+    if (!groups.has(profile.group)) groups.set(profile.group, []);
+    groups.get(profile.group).push(profile);
+  }
+  if (!groups.size) {
+    host.innerHTML = '<p class="muted">No profiles matched the search.</p>';
+    return;
+  }
+  for (const [group, profiles] of groups) {
+    const details = document.createElement('details');
+    details.open = Boolean(query);
+    details.innerHTML = `<summary>${escapeHtml(group)} (${profiles.length})</summary>`;
+    for (const profile of profiles) {
+      details.appendChild(makeItem({
+        title: profile.name,
+        subtitle: `${profile.id} · ${profile.file}${profile.reason ? ` · ${profile.reason}` : ''}`,
+        badge: profile.supported
+          ? { label: `${profile.discovery} entities`, ok: true }
+          : { label: 'conversion error', ok: false },
+        disabled: !profile.supported,
+        action: async () => {
+          try {
+            setStatus(`Fetching ${profile.file}…`);
+            await ensureYaml();
+            const response = await fetch(catalog.yaml_base_url + profile.file, { cache: 'no-store' });
+            if (!response.ok) throw new Error(`YAML fetch failed: HTTP ${response.status}`);
+            const source = await response.text();
+            const yaml = yamlLib.load(source, { schema: yamlLib.DEFAULT_SCHEMA });
+            const pack = buildPack(yaml, {
+              id: profile.id,
+              name: profile.name,
+              group: profile.group,
+              source: `tuya-local ${catalog.tuya_commit.slice(0, 12)}/${profile.file}`,
+            }, {
+              stateTopic: info.state_topic,
+              commandTopic: info.command_topic,
+              rawEntity: info.raw_entity_id,
+            });
+            if (JSON.stringify(pack).length > 200000) throw new Error('Generated pack is larger than the 200 KB limit');
+            setStatus('');
+            showPreview(pack, `Online tuya-local catalog · ${profile.file}`);
+          } catch (error) {
+            setStatus(error.message, true);
+          }
+        },
+      }));
+    }
+    host.appendChild(details);
+  }
+}
+
+async function ensureYaml() {
+  if (yamlLib) return yamlLib;
+  setStatus('Loading YAML parser…');
+  await new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/js-yaml@4/dist/js-yaml.min.js';
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('Could not load js-yaml from the CDN'));
+    document.head.appendChild(script);
+  });
+  yamlLib = window.jsyaml;
+  if (!yamlLib) throw new Error('js-yaml did not initialize');
+  return yamlLib;
+}
+
+async function loadOffline() {
+  try {
+    const data = await fetchJson('/api/profile/offline');
+    offlinePacks = data.packs || [];
+    renderOffline();
+  } catch (error) {
+    $('offline').innerHTML = `<p class="muted">Offline catalog unavailable: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function loadOnline() {
+  try {
+    setStatus('Fetching online catalog…');
+    catalog = await fetchJson($('catalog-url').value.trim());
+    setStatus(`Loaded ${catalog.profiles.length} profiles from tuya-local.`);
+    renderOnline();
+  } catch (error) {
+    setStatus(`Online catalog unavailable: ${error.message}`, true);
+  }
+}
+
+async function savePack() {
+  if (!currentPack) return;
+  try {
+    const { discovery, ...meta } = currentPack;
+    const body = [
+      JSON.stringify({ ...meta, discovery_count: discovery.length }),
+      ...discovery.map((item) => JSON.stringify(item)),
+    ].join('\n') + '\n';
+    if (body.length > 250000) throw new Error('Profile upload is larger than the 250 KB limit');
+    setStatus('Saving profile to the base…');
+    const response = await fetch('/api/profile/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-ndjson' },
+      body,
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) throw new Error(data?.error || `HTTP ${response.status}`);
+    setStatus(`Saved ${currentPack.name}. The base is rebooting…`);
+    $('save').disabled = true;
+    setTimeout(async () => {
+      try {
+        await loadBaseInfo();
+        setStatus(`Active profile is now ${info.pack?.name || 'the saved pack'}.`);
+      } catch (error) {
+        setStatus(`Saved. Reconnect to the base to verify. ${error.message}`);
+      }
+      $('save').disabled = false;
+    }, 6000);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+$('reload-offline').addEventListener('click', loadOffline);
+$('load-online').addEventListener('click', loadOnline);
+$('search').addEventListener('input', renderOnline);
+$('save').addEventListener('click', savePack);
+
+(async () => {
+  try {
+    await loadBaseInfo();
+    await loadOffline();
+  } catch (error) {
+    $('base-info').textContent = `Could not reach the base: ${error.message}`;
+  }
+})();
+</script>
+</body>
+</html>

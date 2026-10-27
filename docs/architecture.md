@@ -71,13 +71,31 @@ interrupts its mains supply.
 
 - Sends `DP_QUERY` every 60 seconds, verifies AES-GCM and replay protection,
   reassembles chunks, and acknowledges the chunk bitmap.
-- Detects the DP profile, maps it to a stable state model, and publishes the raw
-  snapshot to retained `tuya-lora/charger/dps`.
+- Detects the DP profile, or uses the manual profile selected in NVS, maps it to
+  a stable state model, and publishes the raw snapshot to retained
+  `tuya-lora/charger/dps`.
 - Publishes retained `tuya-lora/charger/state`, `tuya-lora/charger/link` and
   `tuya-lora/charger/availability` topics.
-- Subscribes to command topics, maps them to profile-specific `dps` fragments,
-  sends `DP_SET`, waits for `ACK`, and publishes the result.
-- Publishes Home Assistant MQTT discovery configs.
+- Stores the three built-in Feyree/F-OBZ2 fallback profiles and one active
+  browser-generated profile pack. A browser pack is precompiled discovery plus
+  command templates; the remote stays a raw DP proxy.
+- The browser converts any tuya-local descriptor into a pack using native MQTT
+  platforms (light, fan, cover, climate, water heater, humidifier, lock,
+  alarm, siren, valve, event, time/datetime, lawn mower, camera, sensor,
+  binary sensor, switch, number, select, button, text) and decomposes
+  vacuums, media players, remotes and infrared emitters into standard entities.
+- Stores packs as metadata plus one small LittleFS file per discovery entity.
+  Uploads are streamed as NDJSON, so large descriptors do not require a large
+  in-RAM JSON document.
+- Publishes a hidden Raw DPs sensor with the complete `dps` map as an attribute
+  and one retained per-DP topic under the raw snapshot topic. Every DP remains
+  available even when a platform cannot express it natively.
+- Subscribes to the generic DP command topic. Command templates emit a JSON
+  `dps` fragment, which the base forwards to `DP_SET`; legacy built-in commands
+  are mapped by the base. Control is rejected when the selected pack does not
+  match the last snapshot.
+- Publishes precompiled Home Assistant MQTT discovery configs from the pack and
+  clears stale entities when the active profile changes.
 - Serves a live status page and settings UI on the home WiFi.
 - Stores WiFi, MQTT, LoRa, HA, topic and control settings in ESP32 NVS.
 - Marks the remote link unavailable after 10 minutes without a valid frame.
@@ -98,8 +116,11 @@ link diagnostics for monitoring, notifications and slow charging control.
    frames.
 3. The base reassembles chunks, sends `DP_ACK`, and requests missing chunks.
 4. The base publishes the raw snapshot to `tuya-lora/charger/dps` (retained).
-5. The base detects the profile, maps it to the bridge state model, and
-   publishes `tuya-lora/charger/state` (retained).
+5. The base resolves the active profile (`auto` detection or the manual NVS
+   selection). Built-in profiles publish the legacy
+   `tuya-lora/charger/state` model. Browser packs publish their precompiled
+   discovery configs, a hidden Raw DPs sensor, and retained per-DP topics under
+   the raw snapshot topic. Pack entities read the raw snapshot directly.
 6. The base publishes `tuya-lora/charger/link` diagnostics on every valid LoRa
    frame, independent of the device snapshot.
 7. The base publishes availability `online`; Home Assistant updates the
@@ -107,11 +128,13 @@ link diagnostics for monitoring, notifications and slow charging control.
 
 ### Command: Home Assistant → device
 
-1. Home Assistant publishes to `tuya-lora/charger/command/charge`, `start`,
-   `stop`, `current_limit`, `delay`, `mode` or `query`.
-2. The base validates the command and the detected profile, builds the
-   profile-specific `dps` fragment, and sends `DP_SET` with a new sequence
-   number.
+1. Home Assistant publishes legacy commands to
+   `tuya-lora/charger/command/charge`, `start`, `stop`, `current_limit`,
+   `delay`, `mode` or `query`, or a browser-pack command template to
+   `tuya-lora/charger/command/dp`.
+2. The base validates the command and the active profile. Legacy commands are
+   mapped by the built-in profile; pack commands are already JSON `dps`
+   fragments. The base sends `DP_SET` with a new sequence number.
 3. The remote verifies the frame and passes the fragment to `tuya.setDps()`.
 4. The remote replies with `ACK` and a result code.
 5. The base publishes the result to `tuya-lora/charger/command/result` and
@@ -174,7 +197,7 @@ Remote node                         Base node
 ### Bandwidth and latency
 
 LoRa is a low-rate packet link, not an IP transport. The bridge carries a raw DP
-snapshot of up to 1024 bytes in 80-byte chunks, plus short control fragments.
+snapshot of up to 2560 bytes in 80-byte chunks, plus short control fragments.
 
 - A full snapshot is requested every 60 seconds.
 - A successful command triggers a fresh snapshot after a short delay.

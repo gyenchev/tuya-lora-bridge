@@ -16,3 +16,6 @@ build/
 *.map
 .pio/
 .vscode/
+
+# Profile catalog tooling
+web/node_modules/

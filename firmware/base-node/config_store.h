@@ -75,6 +75,7 @@ struct BaseSettings {
 
   // Control
   bool enableCommands;
+  char profileId[24];
   uint8_t minCurrent;
   uint8_t maxCurrent;
   uint8_t minDelayH;

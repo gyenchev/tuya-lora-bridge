@@ -15,7 +15,7 @@
 #undef SD_MOSI
 #undef SD_CS
 
-#define FW_VERSION "0.2.1"
+#define FW_VERSION "0.3.0"
 
 // ---------------------------------------------------------------------------
 // Configuration web UI
@@ -82,7 +82,7 @@
 #define MQTT_RECONNECT_MS    5000UL
 #define MQTT_KEEPALIVE_S     30
 #define MQTT_SOCKET_TIMEOUT_S 5
-#define MQTT_BUFFER_SIZE     2048
+#define MQTT_BUFFER_SIZE     4096
 #define DISPLAY_REFRESH_MS   500UL
 #define DISPLAY_ON_MS        600000UL   // turn the OLED off 10 min after boot
 #define SPLASH_MS            3000UL
@@ -123,6 +123,10 @@
 // valid DP snapshot and detected a supported profile. Unknown profiles reject
 // control until the DP map is confirmed.
 #define ENABLE_COMMANDS 1
+
+// "auto" lets the base choose a built-in profile from the DP snapshot. A
+// built-in id or a custom profile id forces that map instead.
+#define DEFAULT_PROFILE_ID "auto"
 
 #define CHARGER_MIN_CURRENT 6
 #define CHARGER_MAX_CURRENT 32

@@ -8,9 +8,12 @@
 #include <string.h>
 
 #include "boot_guard.h"
+#include "browser_profile.h"
 #include "config.h"
 #include "config_store.h"
 #include "lora_protocol.h"
+#include "profiles.h"
+#include "web_assets.h"
 
 // Defined in base-node.ino (global namespace).
 extern PubSubClient mqtt;
@@ -22,6 +25,11 @@ extern uint32_t lastSeenMs;
 extern int lastRssi;
 extern float lastSnr;
 extern char dpJson[];
+extern bool profileMatched;
+extern char profileError[];
+extern const char *profileActiveId();
+extern const char *profileDetectedId();
+extern uint8_t profileEntityCount();
 
 namespace tuya_lora {
 
@@ -61,10 +69,11 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
   .tab-panel { display: none; padding-top: 8px; }
   .tab-panel.active { display: block; }
   label { display: block; margin: 14px 0 6px; font-weight: 600; }
-  input, select, button { font: inherit; }
-  input[type=text], input[type=password], input[type=number], select {
+  input, select, button, textarea { font: inherit; }
+  input[type=text], input[type=password], input[type=number], select, textarea {
     width: 100%; padding: 10px 12px; border: 1px solid #8886; border-radius: 8px; background: transparent; color: inherit;
   }
+  textarea { min-height: 220px; resize: vertical; font: .85rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
   .row { display: flex; gap: 8px; align-items: end; }
   .row > input { flex: 1; min-width: 0; }
   .check { display: flex; gap: 8px; align-items: center; font-weight: 400; margin-top: 8px; }
@@ -101,6 +110,7 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
     <button type="button" class="tab" data-tab="device" role="tab">Home Assistant</button>
     <button type="button" class="tab" data-tab="timing" role="tab">Timing</button>
     <button type="button" class="tab" data-tab="control" role="tab">Control</button>
+    <button type="button" class="tab" data-tab="profile" role="tab">Profile</button>
     <button type="button" class="tab" data-tab="system" role="tab">System</button>
   </div>
 
@@ -170,6 +180,25 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
     <section class="tab-panel" id="tab-control" data-tab-panel="control" role="tabpanel">
       <h2>Control</h2>
       {{FIELDS_CONTROL}}
+    </section>
+
+    <section class="tab-panel" id="tab-profile" data-tab-panel="profile" role="tabpanel">
+      <h2>Device profile</h2>
+      <div class="status">
+        <div><strong>Active:</strong> {{PROFILE_ACTIVE}}</div>
+        <div><strong>Detected:</strong> {{PROFILE_DETECTED}}</div>
+        <div><strong>Snapshot match:</strong> {{PROFILE_MATCH}}</div>
+        <div><strong>Profile entities:</strong> {{PROFILE_ENTITIES}}</div>
+        <div><strong>Note:</strong> {{PROFILE_NOTE}}</div>
+      </div>
+      <label for="profile_id">DP profile</label>
+      <select id="profile_id" name="profile_id">{{PROFILE_OPTIONS}}</select>
+      <p class="hint"><a href="/profiles">Open profile catalog</a> to browse the online tuya-local catalog or the offline charger packs, convert a descriptor in the browser and save only the selected pack to the base.</p>
+      <p class="hint">Auto-detect chooses a built-in or custom profile from the DP keys in the last snapshot. Selecting a profile, including a browser pack, forces its state map. Save and reboot to apply the selection.</p>
+      <p class="hint">The Control tab DP IDs override outgoing command DPs for built-in profiles. Browser packs and custom profiles define their own command mappings.</p>
+      <label for="profiles_json">Custom profiles (JSON) <span class="def">optional, max 8192 bytes</span></label>
+      <textarea id="profiles_json" name="profiles_json" maxlength="8192" spellcheck="false" autocapitalize="off" autocomplete="off">{{PROFILES_JSON}}</textarea>
+      <p class="hint">The profile catalog is the recommended path for new devices. This editor remains available for compact manual profiles using the generic <code>entities</code> schema or the legacy <code>state</code>/<code>control</code> map. Up to four custom profiles. Save the JSON and reboot once to make new profile IDs available in the dropdown, then select one and save again. Leave the box empty to remove all custom profiles. Invalid JSON is rejected and the editor keeps your text. See <code>docs/tuya-device.md</code> for the schema and examples.</p>
     </section>
 
     <section class="tab-panel" id="tab-system" data-tab-panel="system" role="tabpanel">
@@ -287,42 +316,54 @@ const char STATUS_HTML[] PROGMEM = R"HTML(<!doctype html>
 
   <div class="cards">
     <div class="card"><span class="label">Remote link</span><strong id="online">--</strong></div>
-    <div class="card"><span class="label">Charger state</span><strong id="state">--</strong></div>
-    <div class="card"><span class="label">Power</span><strong id="power">--</strong></div>
-    <div class="card"><span class="label">Session energy</span><strong id="session-energy">--</strong></div>
-    <div class="card"><span class="label">Temperature</span><strong id="temperature">--</strong></div>
-    <div class="card"><span class="label">Current limit</span><strong id="current-limit">--</strong></div>
+    <div class="card"><span class="label">Profile</span><strong id="profile">--</strong></div>
     <div class="card"><span class="label">Last seen</span><strong id="age">--</strong></div>
     <div class="card"><span class="label">LoRa</span><strong id="lora">--</strong></div>
   </div>
 
-  <h2>Charger telemetry</h2>
+  <h2>Profile</h2>
   <table class="telemetry">
-    <tr><th>Status</th><td id="t-status">--</td></tr>
-    <tr><th>Fault flags</th><td id="t-fault">--</td></tr>
-    <tr><th>Plugged</th><td id="t-plugged">--</td></tr>
-    <tr><th>Charging</th><td id="t-charging">--</td></tr>
-    <tr><th>Charge session</th><td id="t-session">--</td></tr>
-    <tr><th>Charge control (DP 124)</th><td id="t-control">--</td></tr>
-    <tr><th>Waiting for RFID</th><td id="t-rfid-wait">--</td></tr>
-    <tr><th>RFID active</th><td id="t-rfid">--</td></tr>
-    <tr><th>Schedule active</th><td id="t-schedule">--</td></tr>
-    <tr><th>Current limit</th><td id="t-current-limit">--</td></tr>
-    <tr><th>Voltage L1</th><td id="t-v1">--</td></tr>
-    <tr><th>Voltage L2</th><td id="t-v2">--</td></tr>
-    <tr><th>Voltage L3</th><td id="t-v3">--</td></tr>
-    <tr><th>Current L1</th><td id="t-a1">--</td></tr>
-    <tr><th>Current L2</th><td id="t-a2">--</td></tr>
-    <tr><th>Current L3</th><td id="t-a3">--</td></tr>
-    <tr><th>Power</th><td id="t-power">--</td></tr>
-    <tr><th>Total energy</th><td id="t-energy">--</td></tr>
-    <tr><th>Session energy</th><td id="t-session-energy">--</td></tr>
-    <tr><th>Temperature</th><td id="t-temperature">--</td></tr>
-    <tr><th>Charge time</th><td id="t-charge-time">--</td></tr>
-    <tr><th>LoRa RSSI</th><td id="t-rssi">--</td></tr>
-    <tr><th>LoRa SNR</th><td id="t-snr">--</td></tr>
-    <tr><th>Last seen</th><td id="t-age">--</td></tr>
+    <tr><th>Active profile</th><td id="t-profile">--</td></tr>
+    <tr><th>Selected profile</th><td id="t-profile-selected">--</td></tr>
+    <tr><th>Detected profile</th><td id="t-profile-detected">--</td></tr>
+    <tr><th>Profile match</th><td id="t-profile-match">--</td></tr>
+    <tr><th>Profile entities</th><td id="t-profile-entities">--</td></tr>
+    <tr><th>Profile note</th><td id="t-profile-note">--</td></tr>
   </table>
+
+  <h2>Device telemetry</h2>
+  <p class="muted" id="telemetry-note">Values from the selected profile.</p>
+  <div id="telemetry-dynamic" hidden>
+    <table class="telemetry" id="telemetry-table"></table>
+  </div>
+  <div id="telemetry-fixed">
+    <table class="telemetry">
+      <tr><th>Status</th><td id="t-status">--</td></tr>
+      <tr><th>Fault flags</th><td id="t-fault">--</td></tr>
+      <tr><th>Plugged</th><td id="t-plugged">--</td></tr>
+      <tr><th>Charging</th><td id="t-charging">--</td></tr>
+      <tr><th>Charge session</th><td id="t-session">--</td></tr>
+      <tr><th>Charge control (DP 124)</th><td id="t-control">--</td></tr>
+      <tr><th>Waiting for RFID</th><td id="t-rfid-wait">--</td></tr>
+      <tr><th>RFID active</th><td id="t-rfid">--</td></tr>
+      <tr><th>Schedule active</th><td id="t-schedule">--</td></tr>
+      <tr><th>Current limit</th><td id="t-current-limit">--</td></tr>
+      <tr><th>Voltage L1</th><td id="t-v1">--</td></tr>
+      <tr><th>Voltage L2</th><td id="t-v2">--</td></tr>
+      <tr><th>Voltage L3</th><td id="t-v3">--</td></tr>
+      <tr><th>Current L1</th><td id="t-a1">--</td></tr>
+      <tr><th>Current L2</th><td id="t-a2">--</td></tr>
+      <tr><th>Current L3</th><td id="t-a3">--</td></tr>
+      <tr><th>Power</th><td id="t-power">--</td></tr>
+      <tr><th>Total energy</th><td id="t-energy">--</td></tr>
+      <tr><th>Session energy</th><td id="t-session-energy">--</td></tr>
+      <tr><th>Temperature</th><td id="t-temperature">--</td></tr>
+      <tr><th>Charge time</th><td id="t-charge-time">--</td></tr>
+      <tr><th>LoRa RSSI</th><td id="t-rssi">--</td></tr>
+      <tr><th>LoRa SNR</th><td id="t-snr">--</td></tr>
+      <tr><th>Last seen</th><td id="t-age">--</td></tr>
+    </table>
+  </div>
 
   <h2>Raw DP JSON</h2>
   <details><summary>Show raw JSON</summary><pre id="dp-json">--</pre></details>
@@ -349,6 +390,108 @@ function ago(seconds) {
   if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
   return Math.floor(seconds / 3600) + 'h ago';
 }
+let telemetryFields = [];
+let telemetryProfile = null;
+let telemetryBusy = false;
+
+function parseDps(d) {
+  try {
+    const raw = JSON.parse(d.dp_json || '{}');
+    return raw && raw.dps ? raw.dps : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function telemetryText(field, dps) {
+  let key = field.dp;
+  let redirected = false;
+  for (const redirect of field.redirects || []) {
+    if (String(dps[redirect.constraint]) === String(redirect.value) &&
+        dps[redirect.dp] !== undefined && dps[redirect.dp] !== null) {
+      key = redirect.dp;
+      redirected = true;
+      break;
+    }
+  }
+  if (!redirected && (dps[key] === undefined || dps[key] === null)) {
+    for (const fallback of field.fallbacks || []) {
+      if (dps[fallback] !== undefined && dps[fallback] !== null) { key = fallback; break; }
+    }
+  }
+  const raw = dps[key];
+  if (raw === undefined || raw === null) return '--';
+  if (field.kind === 'bool') {
+    let value;
+    if (Array.isArray(field.values) && field.values.length) {
+      value = field.values.map(String).includes(String(raw));
+    } else {
+      value = Boolean(raw);
+    }
+    return value ? 'Yes' : 'No';
+  }
+  if (field.kind === 'enum') {
+    const key = String(raw);
+    if (field.map && Object.prototype.hasOwnProperty.call(field.map, key)) {
+      return String(field.map[key]);
+    }
+    return String(raw);
+  }
+  if (field.kind === 'number') {
+    const number = Number(raw);
+    if (!Number.isFinite(number)) return String(raw);
+    const scale = Number(field.scale || 1);
+    const value = scale !== 1 ? number / scale : number;
+    const precision = Number.isInteger(field.precision) ? field.precision : (scale > 1 ? 1 : 0);
+    return value.toFixed(precision) + (field.unit ? ' ' + field.unit : '');
+  }
+  if (typeof raw === 'object') return JSON.stringify(raw);
+  return String(raw);
+}
+
+async function loadTelemetry() {
+  try {
+    const response = await fetch('/api/profile/telemetry', {cache: 'no-store'});
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function renderTelemetry(d) {
+  const table = $('telemetry-table');
+  if (!table) return;
+  table.replaceChildren();
+  const dps = parseDps(d);
+  let fields = telemetryFields;
+  if (!fields.length) {
+    fields = Object.keys(dps)
+      .sort((a, b) => Number(a) - Number(b))
+      .map((id) => ({ key: 'dp_' + id, label: 'DP ' + id, dp: id, kind: 'text' }));
+  }
+  if (!fields.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 2;
+    cell.textContent = d.have_state ? 'No telemetry definitions for this pack.' : 'Waiting for DP snapshot.';
+    row.appendChild(cell);
+    table.appendChild(row);
+    return;
+  }
+  for (const field of fields) {
+    const row = document.createElement('tr');
+    const label = document.createElement('th');
+    label.textContent = field.label || ('DP ' + field.dp);
+    const value = document.createElement('td');
+    value.textContent = telemetryText(field, dps);
+    row.appendChild(label);
+    row.appendChild(value);
+    table.appendChild(row);
+  }
+}
+
 async function refresh() {
   try {
     const response = await fetch('/api/status', {cache: 'no-store'});
@@ -358,14 +501,16 @@ async function refresh() {
     set('base-link', d.wifi_connected ? 'connected to ' + d.base_ip + ' (' + d.wifi_rssi + ' dBm)' : 'WiFi not connected');
     set('mqtt-link', d.mqtt_connected ? 'connected' : 'not connected');
     set('online', d.online ? 'online' : (d.have_seen ? 'offline' : 'waiting'));
-    set('state', d.have_state ? d.status : 'unknown');
-    set('power', d.have_state ? fmt(d.power_kw, 2, ' kW') : '--');
-    set('session-energy', d.have_state ? fmt(d.session_energy_kwh, 2, ' kWh') : '--');
-    set('temperature', d.have_state ? fmt(d.temperature_c, 1, ' °C') : '--');
-    set('current-limit', d.have_state ? d.current_limit + ' A' : '--');
+    set('profile', d.profile || 'unknown');
     set('age', d.have_seen ? ago(d.age_s) : 'never');
     set('lora', d.have_seen ? d.rssi + ' dBm / ' + fmt(d.snr, 1) + ' dB' : '--');
     set('t-status', d.have_state ? d.status : 'unknown');
+    set('t-profile', d.profile || 'unknown');
+    set('t-profile-selected', d.profile_selected || 'auto');
+    set('t-profile-detected', d.profile_detected || 'unknown');
+    set('t-profile-match', d.have_state ? yesNo(d.profile_match) : 'waiting for snapshot');
+    set('t-profile-entities', d.profile_entities || 0);
+    set('t-profile-note', d.profile_error || 'none');
     set('t-fault', d.have_state ? '0x' + Number(d.fault).toString(16).padStart(4, '0') : '--');
     set('t-plugged', d.have_state ? yesNo(d.plugged) : '--');
     set('t-charging', d.have_state ? yesNo(d.charging) : '--');
@@ -390,6 +535,27 @@ async function refresh() {
     set('t-snr', d.have_seen ? fmt(d.snr, 1, ' dB') : '--');
     set('t-age', d.have_seen ? ago(d.age_s) : 'never');
     set('dp-json', d.dp_json || '(none)');
+    const isPack = Boolean(d.profile_pack);
+    const dynamic = $('telemetry-dynamic');
+    const fixed = $('telemetry-fixed');
+    if (dynamic) dynamic.hidden = !isPack;
+    if (fixed) fixed.hidden = isPack;
+    const note = $('telemetry-note');
+    if (note) note.textContent = isPack
+      ? 'Values from the selected browser pack; all raw DPs are available below.'
+      : 'Legacy charger telemetry for the built-in profiles.';
+    if (isPack) {
+      if (telemetryProfile !== d.profile_selected && !telemetryBusy) {
+        telemetryBusy = true;
+        try {
+          telemetryFields = await loadTelemetry();
+          telemetryProfile = d.profile_selected;
+        } finally {
+          telemetryBusy = false;
+        }
+      }
+      renderTelemetry(d);
+    }
   } catch (error) {
     set('updated', 'connection lost');
   }
@@ -428,6 +594,9 @@ String htmlEscape(const char *text) {
       case '>': out += "&gt;"; break;
       case '"': out += "&quot;"; break;
       case '\'': out += "&#39;"; break;
+      // Prevent user text from being re-expanded as a template placeholder.
+      case '{': out += "&#123;"; break;
+      case '}': out += "&#125;"; break;
       default: out += *p; break;
     }
   }
@@ -1104,7 +1273,7 @@ void sendResult(const String &title, const String &detail) {
 }
 
 void renderForm(const BaseSettings &s, const String &error, int status,
-                const String &tab) {
+                const String &tab, const char *customJson = nullptr) {
   String page = FPSTR(BASE_HTML);
   page.replace("{{FW_VERSION}}", FW_VERSION);
   page.replace("{{IP}}", ipText());
@@ -1137,6 +1306,22 @@ void renderForm(const BaseSettings &s, const String &error, int status,
   page.replace("{{SETUP_AP_PASSWORD_PLACEHOLDER}}",
                "leave blank to keep current");
   page.replace("{{SETUP_AP_CHANNEL_OPTIONS}}", setupApChannelOptions(s));
+  page.replace("{{PROFILE_ACTIVE}}", htmlEscape(profileActiveId()));
+  page.replace("{{PROFILE_DETECTED}}", htmlEscape(profileDetectedId()));
+  page.replace("{{PROFILE_MATCH}}",
+               !haveState ? "waiting for snapshot"
+                          : (profileMatched ? "yes" : "no"));
+  if (profileError[0]) {
+    page.replace("{{PROFILE_NOTE}}", htmlEscape(profileError));
+  } else {
+    page.replace("{{PROFILE_NOTE}}", "none");
+  }
+  page.replace("{{PROFILE_OPTIONS}}", profileOptions(s.profileId));
+  page.replace("{{PROFILE_ENTITIES}}", String(profileEntityCount()));
+  // Keep the JSON replacement last so profile text cannot be expanded as a
+  // template placeholder.
+  page.replace("{{PROFILES_JSON}}",
+               htmlEscape(customJson ? customJson : profilesCustomJson()));
   server->sendHeader("Cache-Control", "no-store");
   server->send(status, "text/html", page);
 }
@@ -1218,7 +1403,24 @@ void handleApiStatus() {
   json += String(lastStatus.tempDc / 10.0f, 1);
   json += ",\"charge_seconds\":";
   json += String(lastStatus.chargeSeconds);
-  json += ",\"dp_json\":\"";
+  json += ",\"profile\":\"";
+  json += jsonEscape(profileActiveId());
+  json += "\",\"profile_selected\":\"";
+  json += jsonEscape(settings.profileId);
+  json += "\",\"profile_detected\":\"";
+  json += jsonEscape(profileDetectedId());
+  json += "\",\"profile_match\":";
+  json += (profileMatched ? "true" : "false");
+  json += ",\"profile_entities\":";
+  json += String(profileEntityCount());
+  json += ",\"profile_pack\":";
+  json += (browserProfileSelected() ? "true" : "false");
+  json += ",\"profile_device_type\":\"";
+  json += jsonEscape(browserProfileDeviceType());
+  json += "\"";
+  json += ",\"profile_error\":\"";
+  json += jsonEscape(profileError);
+  json += "\",\"dp_json\":\"";
   json += jsonEscape(dpJson);
   json += "\"}";
   server->sendHeader("Cache-Control", "no-store");
@@ -1327,6 +1529,10 @@ void handleSave() {
   }
 
   BaseSettings next = settings;
+  copyArg("profile_id", next.profileId, sizeof(next.profileId), false);
+  const String customJson = server->hasArg("profiles_json")
+                                ? server->arg("profiles_json")
+                                : String(profilesCustomJson());
   copyArg("wifi_ssid", next.wifiSsid, sizeof(next.wifiSsid), false);
   copyArg("wifi_password", next.wifiPassword, sizeof(next.wifiPassword), true);
   if (server->hasArg("clear_wifi_password")) next.wifiPassword[0] = '\0';
@@ -1338,7 +1544,8 @@ void handleSave() {
 
   const long port = server->arg("mqtt_port").toInt();
   if (port < 1 || port > 65535) {
-    renderForm(next, "MQTT port must be between 1 and 65535.", 400, "mqtt");
+    renderForm(next, "MQTT port must be between 1 and 65535.", 400, "mqtt",
+               customJson.c_str());
     return;
   }
   next.mqttPort = static_cast<uint16_t>(port);
@@ -1353,7 +1560,7 @@ void handleSave() {
   const long apChannel = server->arg("setup_ap_channel").toInt();
   if (apChannel < 1 || apChannel > 13) {
     renderForm(next, "Setup AP channel must be between 1 and 13.", 400,
-               "system");
+               "system", customJson.c_str());
     return;
   }
   next.setupApChannel = static_cast<uint8_t>(apChannel);
@@ -1361,17 +1568,32 @@ void handleSave() {
   String error;
   String tab = "system";
   if (!applyAdvancedFields(next, error, tab)) {
-    renderForm(next, error, 400, tab);
+    renderForm(next, error, 400, tab, customJson.c_str());
     return;
   }
   if (!validate(next, error, tab)) {
-    renderForm(next, error, 400, tab);
+    renderForm(next, error, 400, tab, customJson.c_str());
+    return;
+  }
+  if (!profilesValidateCustomJson(customJson.c_str(), error)) {
+    renderForm(next, String("Custom profiles: ") + error, 400, "profile",
+               customJson.c_str());
+    return;
+  }
+  if (!profilesSelectionValid(next.profileId, customJson.c_str(), error)) {
+    renderForm(next, error, 400, "profile", customJson.c_str());
     return;
   }
 
   settings = next;
   if (!saveSettings()) {
-    renderForm(next, "Could not write settings to NVS.", 500, tab);
+    renderForm(next, "Could not write settings to NVS.", 500, tab,
+               customJson.c_str());
+    return;
+  }
+  if (!profilesSaveCustomToNvs(customJson.c_str(), error)) {
+    renderForm(next, String("Could not save custom profiles: ") + error, 500,
+               "profile", customJson.c_str());
     return;
   }
   bootGuardClear();
@@ -1385,6 +1607,7 @@ void handleSave() {
 void handleFactory() {
   bootGuardClear();
   clearSettings();
+  profilesClearCustom();
   sendResult("Factory reset",
              "All settings were cleared. The base is rebooting into setup mode "
              "at http://192.168.4.1:" + String(settings.webUiPort) + "/.");
@@ -1407,6 +1630,130 @@ void handleScan() {
   json += "]";
   WiFi.scanDelete();
   server->sendHeader("Cache-Control", "no-store");
+  server->send(200, "application/json", json);
+}
+
+void addProfileCors() {
+  server->sendHeader("Access-Control-Allow-Origin", "*");
+  server->sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  server->sendHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+void handleProfileBuilder() {
+  server->sendHeader("Cache-Control", "no-store");
+  server->send_P(200, "text/html", PROFILE_BUILDER_HTML);
+}
+
+void handleProfileConverter() {
+  server->sendHeader("Cache-Control", "no-store");
+  server->send_P(200, "application/javascript", PROFILE_CONVERTER_JS);
+}
+
+void handleProfileMapping() {
+  server->sendHeader("Cache-Control", "no-store");
+  server->send_P(200, "application/javascript", PROFILE_MAPPING_JS);
+}
+
+void handleProfileOffline() {
+  addProfileCors();
+  server->sendHeader("Cache-Control", "no-store");
+  server->send_P(200, "application/json", OFFLINE_CHARGERS_JSON);
+}
+
+void handleProfileTelemetry() {
+  addProfileCors();
+  server->sendHeader("Cache-Control", "no-store");
+  server->send(200, "application/json", browserProfileTelemetryJson());
+}
+
+void handleProfileInfo() {
+  JsonDocument doc;
+  doc["ha_name"] = settings.haName;
+  doc["ha_device_id"] = settings.haDeviceId;
+  doc["state_topic"] = settings.mqttTopicDps;
+  doc["command_topic"] = browserProfileCommandTopic();
+  doc["raw_entity_id"] = browserProfileRawEntityId();
+  doc["availability_topic"] = settings.mqttTopicAvailability;
+  doc["selection"] = settings.profileId;
+  doc["pack_loaded"] = browserProfileLoaded();
+  if (browserProfileLoaded()) {
+    JsonObject pack = doc["pack"].to<JsonObject>();
+    pack["id"] = browserProfileId();
+    pack["name"] = browserProfileName();
+    pack["device_type"] = browserProfileDeviceType();
+    pack["discovery"] = browserProfileDiscoveryCount();
+  }
+  String json;
+  json.reserve(512);
+  serializeJson(doc, json);
+  addProfileCors();
+  server->sendHeader("Cache-Control", "no-store");
+  server->send(200, "application/json", json);
+}
+
+void handleProfileOptions() {
+  addProfileCors();
+  server->send(204, "text/plain", "");
+}
+
+bool profileStreamOk = false;
+String profileStreamError;
+
+void handleProfileRaw() {
+  HTTPRaw &raw = server->raw();
+  if (raw.status == RAW_START) {
+    profileStreamOk = false;
+    profileStreamError = "";
+    browserProfileStreamBegin();
+    return;
+  }
+  if (raw.status == RAW_WRITE) {
+    if (profileStreamError.length() == 0 && raw.currentSize > 0) {
+      String error;
+      if (!browserProfileStreamFeed(raw.buf, raw.currentSize, error)) {
+        profileStreamError = error;
+      }
+    }
+    return;
+  }
+  if (raw.status == RAW_END) {
+    if (profileStreamError.length() == 0) {
+      String error;
+      if (browserProfileStreamFinish(error)) {
+        profileStreamOk = true;
+      } else {
+        profileStreamError = error;
+      }
+    }
+    return;
+  }
+  if (raw.status == RAW_ABORTED) {
+    profileStreamError = "profile upload aborted";
+    browserProfileStreamAbort();
+  }
+}
+
+void handleProfileSave() {
+  addProfileCors();
+  if (!profileStreamOk) {
+    JsonDocument doc;
+    doc["ok"] = false;
+    doc["error"] = profileStreamError.length() ? profileStreamError
+                                                : "profile upload was not received";
+    String json;
+    serializeJson(doc, json);
+    server->send(400, "application/json", json);
+    return;
+  }
+
+  bootGuardClear();
+  rebootAtMs = millis() + 1500;
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["id"] = browserProfileId();
+  doc["name"] = browserProfileName();
+  String json;
+  serializeJson(doc, json);
   server->send(200, "application/json", json);
 }
 
@@ -1450,6 +1797,14 @@ void webUiBegin() {
   server = new WebServer(settings.webUiPort);
   server->on("/", HTTP_GET, handleStatus);
   server->on("/settings", HTTP_GET, handleSettings);
+  server->on("/profiles", HTTP_GET, handleProfileBuilder);
+  server->on("/profile_converter.mjs", HTTP_GET, handleProfileConverter);
+  server->on("/profile_mapping.mjs", HTTP_GET, handleProfileMapping);
+  server->on("/api/profile/info", HTTP_GET, handleProfileInfo);
+  server->on("/api/profile/offline", HTTP_GET, handleProfileOffline);
+  server->on("/api/profile/telemetry", HTTP_GET, handleProfileTelemetry);
+  server->on("/api/profile/save", HTTP_POST, handleProfileSave, handleProfileRaw);
+  server->on("/api/profile/save", HTTP_OPTIONS, handleProfileOptions);
   server->on("/api/status", HTTP_GET, handleApiStatus);
   server->on("/save", HTTP_POST, handleSave);
   server->on("/factory", HTTP_POST, handleFactory);

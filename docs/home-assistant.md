@@ -10,8 +10,10 @@ discovery configs. No custom integration is required.
 | Topic | Retain | Payload |
 |---|---|---|
 | `tuya-lora/charger/state` | yes | mapped state JSON |
+| `tuya-lora/charger/state/entities/e0` … `e9` | yes | per-entity JSON for legacy custom generic profiles |
 | `tuya-lora/charger/link` | yes | LoRa link diagnostics |
 | `tuya-lora/charger/dps` | yes | raw Tuya DP snapshot |
+| `tuya-lora/charger/dps/<dp-id>` | yes | per-DP value, published in browser-pack mode |
 | `tuya-lora/charger/availability` | yes | `online` / `offline` |
 | `tuya-lora/charger/command/result` | no | command result JSON |
 | `tuya-lora/charger/debug` | no | profile and snapshot summary |
@@ -42,6 +44,10 @@ Example `state`:
   "temperature": 31.2,
   "charge_seconds": 3600,
   "profile": "3-phase",
+  "profile_selected": "auto",
+  "profile_detected": "3-phase",
+  "profile_match": true,
+  "profile_entities": 0,
   "delay_hours": 0
 }
 ```
@@ -58,7 +64,7 @@ Example `link`:
   "seq": 42,
   "boot_id": 123456789,
   "last_seen": "2026-10-22T11:32:05Z",
-  "fw": "0.2.1"
+  "fw": "0.3.0"
 }
 ```
 
@@ -66,17 +72,25 @@ The base publishes `link` as soon as it receives a valid LoRa frame, before the
 device itself is reachable. Device entities remain `unknown` until the first DP
 snapshot arrives.
 
-`profile` is detected from the raw DP keys:
+Profile fields:
 
-- `single-phase`
-- `3-phase`
-- `F-OBZ2`
-- `fallback`
-- `unknown`
+- `profile` is the active profile ID: a built-in ID, a custom ID, `fallback`, or
+  `unknown` before the first snapshot.
+- `profile_selected` is the NVS selection: `auto`, a built-in ID or a custom ID.
+- `profile_detected` is what auto-detection would choose from the last snapshot.
+- `profile_match` is `true` when the active profile matches that snapshot.
+- `profile_entities` is the number of discovery entities in the active browser
+  pack, or the number of generic entities in a legacy custom profile.
+- `profile_error` is present when the active profile is the fallback or a manual
+  profile does not match.
 
-Control is rejected for `fallback` and `unknown`. `delay_hours` is the last
-reported delay from DP `104` or `118`; it can be `0` when the profile does not
-expose a delay.
+Built-in IDs are `single-phase`, `3-phase` and `F-OBZ2`; custom IDs come from the
+Profile tab JSON. The internal `fallback` profile is read-only. Control is
+rejected whenever `profile_match` is false.
+
+`delay_hours` is the last reported delay from the active profile's delay DP (DP
+`104` for single-phase, DP `118` for three-phase, or the legacy custom field).
+It can be `0` when the profile does not expose a delay.
 
 ### Commands published to the base
 
@@ -88,6 +102,8 @@ expose a delay.
 | `tuya-lora/charger/command/current_limit` | number, for example `16` |
 | `tuya-lora/charger/command/delay` | hours, `0`–`15` |
 | `tuya-lora/charger/command/mode` | `charge_now` / `charge_schedule` |
+| `tuya-lora/charger/command/dp` | JSON DP fragment from a browser-pack command template |
+| `tuya-lora/charger/command/generic/e0` … `e9` | entity-specific value for legacy custom generic profiles |
 | `tuya-lora/charger/command/query` | any payload; requests a fresh snapshot |
 
 The base maps a command to the detected profile's DP IDs, sends a LoRa
@@ -114,9 +130,80 @@ Result values:
 - `send_failed`
 
 Control is accepted only after the base has received a valid DP snapshot and
-detected a supported profile. A command is rejected while another command or a
-snapshot is in progress. The remote does not validate DP semantics; it only
-forwards the fragment to Tuya after an authenticated LoRa frame.
+the active profile matches it. The internal fallback profile is read-only. A
+command is rejected while another command or a snapshot is in progress. The
+remote does not validate DP semantics; it only forwards the fragment to Tuya
+after an authenticated LoRa frame.
+
+### Browser pack entities
+
+A browser pack does not use per-entity state topics. It publishes precompiled
+Home Assistant discovery configs; the templates read the raw snapshot at
+`tuya-lora/charger/dps` and command templates publish a JSON `dps` fragment to
+`tuya-lora/charger/command/dp`.
+
+The base also publishes:
+
+- a hidden **Raw DPs** sensor at `sensor.<ha-name>_pack_raw`, with the complete
+  `dps` map in its `dps` attribute;
+- per-DP retained topics under `tuya-lora/charger/dps/<dp-id>`, used by the
+  camera image entity and available to automations.
+
+The object IDs are generated from the pack entity position, with a `pack_`
+prefix. Examples:
+
+```text
+homeassistant/light/tuya_lora_bridge/pack_e0/config
+homeassistant/climate/tuya_lora_bridge/pack_e1/config
+homeassistant/sensor/tuya_lora_bridge/pack_raw/config
+```
+
+### Legacy custom generic entities
+
+A legacy custom profile with an `entities` list still uses per-entity state and
+command topics:
+
+- one discovery config under
+  `<discovery-prefix>/<component>/<ha-device-id>/profile_eN/config`;
+- one retained state object under `tuya-lora/charger/state/entities/eN`;
+- for writable entities, a command topic
+  `tuya-lora/charger/command/generic/eN`.
+
+`eN` is the entity's zero-based position in the descriptor and is stable as long
+as the entity order is unchanged. Suggested entity IDs use
+`tuya_<device-name>_profile_eN`, for example
+`sensor.tuya_charger_profile_e0`. The friendly name comes from the descriptor.
+This path is retained for manual profiles; new devices should use the browser
+catalog.
+
+| Entity type | State | Command payload |
+|---|---|---|
+| `sensor` | numeric or mapped value | none |
+| `binary_sensor` | `ON` / `OFF` | none |
+| `switch` | `ON` / `OFF` | `ON` / `OFF` |
+| `number` | numeric value | number in display units |
+| `select` | option string | one of the advertised options |
+| `button` | none | `PRESS` |
+| `text` | string | string |
+
+The state object contains the primary DP plus any non-hidden extra DPs. For
+example, a status sensor with a fault code and description can expose all three
+as state plus attributes:
+
+```json
+{
+  "sensor": "waiting_for_authorization",
+  "fault_code": 0,
+  "description": "Ready"
+}
+```
+
+Generic commands are accepted only when `profile_match` is `true`. If commands
+are disabled in the web UI, writable generic entities are published as read-only
+sensors and buttons are omitted. Built-in and legacy custom profiles keep their
+existing entity IDs and the fixed charger topics. The LoRa link diagnostic
+entities (`link_age`, `rssi`, `snr`, `last_seen`) are published in both legacy
+and generic modes.
 
 ## MQTT discovery
 
@@ -138,6 +225,21 @@ homeassistant/number/tuya_lora_bridge/current_limit/config
 homeassistant/switch/tuya_lora_bridge/charge_control/config
 ```
 
+Browser pack entities use `pack_eN` object IDs; legacy custom generic entities
+use `profile_eN`:
+
+```text
+homeassistant/light/tuya_lora_bridge/pack_e0/config
+homeassistant/climate/tuya_lora_bridge/pack_e1/config
+homeassistant/sensor/tuya_lora_bridge/pack_raw/config
+homeassistant/sensor/tuya_lora_bridge/profile_e0/config
+```
+
+When the active profile changes, the base clears discovery configs for stale
+pack/custom slots and republishes the new set. Legacy built-in discovery topics
+are cleared while a pack or custom profile is active, and restored when a
+built-in profile becomes active again.
+
 Common device block:
 
 ```json
@@ -147,7 +249,11 @@ Common device block:
     "name": "Tuya charger",
     "manufacturer": "",
     "model": "Tuya device via Tuya LoRa Bridge",
-    "sw_version": "0.2.1"
+    "sw_version": "0.3.0"
+  },
+  "origin": {
+    "name": "tuya-lora-bridge",
+    "sw_version": "0.3.0"
   }
 }
 ```

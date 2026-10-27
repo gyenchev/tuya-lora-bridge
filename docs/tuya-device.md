@@ -4,9 +4,12 @@ This document covers the Tuya local API used by the remote node and the DP maps
 that the base node can use. It is a reference for adapting the bridge to a
 specific Tuya device.
 
-The included profiles target a Feyree three-phase EV charger. Tuya products
-change their DP maps between models and firmware versions, so always capture the
-map for the actual device before enabling control.
+The base includes built-in compatibility profiles for Feyree three-phase,
+single-phase and F-OBZ2 chargers, plus a validated custom-JSON profile editor.
+Generic custom profiles map DPs to Home Assistant entities using a compact
+tuya-local-style schema. Tuya products change their DP maps between models and
+firmware versions, so always capture the map for the actual device before
+enabling control.
 
 ## What the remote node needs
 
@@ -263,6 +266,397 @@ The same DP number can mean different things:
 
 Always capture the actual map before enabling control.
 
+## Profiles
+
+The base owns both directions of the DP map:
+
+- **State decoding** turns the raw snapshot into the stable state model published
+  to MQTT and Home Assistant.
+- **Control encoding** turns MQTT commands into Tuya `dps` fragments.
+
+The remote node never receives a profile; it only forwards raw DP snapshots and
+`DP_SET` fragments.
+
+### Built-in profiles
+
+| ID | Name | Auto priority | Typical detection keys |
+|---|---|---:|---|
+| `3-phase` | Feyree 3-phase | 30 | DP 103, 104, 105, 106, 107 |
+| `single-phase` | Feyree single-phase | 20 | DP 106, 107, 108 |
+| `F-OBZ2` | Feyree F-OBZ2 | 10 | DP 102, 105, 109 |
+| `fallback` | Internal read-only fallback | 0 | none |
+
+`fallback` is not user-selectable. It maps a few common fields and rejects all
+control. Auto-detection ignores profiles with no required DPs. Higher priority
+wins when more than one profile matches. Custom profiles default to priority 5.
+
+The **Profile** tab in the base web UI offers `auto`, the three built-in
+profiles, and any loaded custom profiles. The selection is stored in NVS.
+Saving a profile selection reboots the base so the new active map is applied
+cleanly.
+
+The **Control** tab still has DP ID fields for the built-in profiles. These are
+legacy outgoing-command overrides: they change the command DP numbers for the
+built-in map but do not change its state decoding. Use a custom profile when both
+directions need different DPs.
+
+### Browser profile catalog (recommended)
+
+Open `/profiles` on the base. The browser loads the tuya-local catalog, converts
+the selected descriptor, and uploads a precompiled pack as NDJSON. The base
+stores metadata plus one discovery file per entity in LittleFS and publishes the
+pack's native Home Assistant discovery configs. All 1,779 current descriptors
+convert; the catalog has no “milestone”/unsupported gate.
+
+Native MQTT platforms cover light, fan, cover, climate, water heater,
+humidifier, lock, alarm, siren, valve, event, time/datetime, lawn mower, camera,
+sensor, binary sensor, switch, number, select, button and text. Vacuums, media
+players, remotes and infrared emitters are decomposed into standard MQTT
+controls and sensors. A hidden **Raw DPs** sensor always exposes every DP as an attribute,
+and per-DP topics are published under the raw snapshot topic.
+
+The pack path has no 4-DP/10-entity/32-mapping limits. The current firmware
+accepts uploads up to 250 KB, up to 256 discovery entities and 24 KB per
+discovery item; the largest current descriptor is 181 KB / 81 entities. Pack
+storage uses a custom 384 KB LittleFS partition.
+
+### Legacy custom profiles
+
+The custom JSON editor remains for manual compact profiles. It is no longer the
+recommended path and has the smaller limits below.
+
+Legacy custom profiles are stored as JSON in the base node's NVS under
+`tuya-lora-base/profiles_json`. They are not part of the repository, are not
+published to MQTT, and are cleared by a factory reset.
+
+Limits:
+
+- at most four custom profiles;
+- at most 8192 bytes of JSON;
+- profile IDs contain only letters, digits, `_` and `-`, with 1–23 characters;
+- IDs `auto`, `fallback`, `unknown` and the built-in IDs are reserved;
+- invalid JSON is rejected and the previous valid profile set remains active;
+- each legacy profile must define at least one DP in `state` or `entities`;
+- a legacy generic profile can define at most 10 entities, 4 DPs per entity and
+  32 mapping rules. These limits do not apply to browser packs.
+
+The editor accepts either a top-level array or an object with a `profiles`
+array.
+
+#### Legacy generic `entities` descriptors
+
+This is the legacy manual path. Use the browser catalog for new devices. The base
+translates a compact `entities` list into Home Assistant discovery configs and
+publishes one state topic per entity.
+
+Supported entity types:
+
+| `entity` | Purpose | Command topic |
+|---|---|---|
+| `sensor` | read-only numeric or enum value | none |
+| `binary_sensor` | read-only boolean, for example a fault | none |
+| `switch` | on/off control | yes |
+| `number` | numeric control with a range | yes |
+| `select` | enumerated control | yes |
+| `button` | write-only action | yes |
+| `text` | string value or schedule | yes |
+
+Entity object fields:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `entity` | yes | One of the types above. |
+| `name` | no | Friendly name. Derived from `translation_key`, `class` or the entity type if omitted. |
+| `class` | no | Home Assistant device class, for example `temperature`, `voltage`, `power`, `energy`, `current`, `enum`, `problem`. |
+| `category` | no | `diagnostic` or `config`. |
+| `icon` | no | Home Assistant icon, for example `mdi:thermometer`. |
+| `hidden` | no | Publish the entity disabled by default. |
+| `translation_key` | no | Small name-derivation helper: `status`, `voltage_x`, `current_x`. |
+| `translation_placeholders` | no | `{"x": "A"}` for `voltage_x`/`current_x`. |
+| `dps` | yes | 1–4 DP definitions. The first DP is the entity's primary value. |
+
+DP object fields:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `id` | yes | Tuya DP number, 1–999. |
+| `type` | yes | `string`, `boolean`, `integer`, `bitfield` or `float`. |
+| `name` | yes | Role or attribute name, letters/digits/`_` only and starting with a letter or `_`. The primary DP name depends on the entity type: `sensor` (sensor/binary_sensor), `switch`, `value` (number/text), `option` (select), `button`. |
+| `mapping` | no | Value mapping and scale rules. |
+| `range` | no | `{"min": ..., "max": ..., "step": ...}` for number/text controls. |
+| `unit` | no | Unit shown by Home Assistant, for example `C`, `V`, `A`, `kWh`. |
+| `class` | no | Sensor state class: `measurement`, `total` or `total_increasing`. |
+| `precision` | no | Suggested display precision, 0–10. |
+| `scale` | no | Divisor applied to numeric values (tuya-local semantics). |
+| `optional` | no | Ignore this DP when deriving auto-detection keys. |
+| `readonly` | no | Not valid for the primary DP of a writable entity. |
+| `hidden` | no | Do not publish this DP as an attribute. Hidden is not allowed on the primary DP. |
+
+Mapping rules are a list. Each rule can contain:
+
+- `dps_val` — the raw Tuya value. Omit it for a default rule. `null` also means
+  default.
+- `value` — the Home Assistant value. If omitted with `dps_val`, the raw value
+  is passed through.
+- `scale` — a standalone rule (`{"scale": 10}`) that divides numeric raw values.
+  It cannot be combined with `dps_val`/`value` in the same rule.
+- `hidden` — keep the value out of a select/enum option list while still mapping
+  incoming state.
+
+`scale` in a generic `entities` descriptor is a **divisor**, matching
+tuya-local. A raw voltage of `2301` with `"scale": 10` becomes `230.1`. The
+legacy `state` map below uses a multiplier instead; do not mix the two.
+
+Number entities require a `range`. Select entities require a `mapping` with at
+least one `dps_val` option. Text entities require a `string` primary DP. Switch
+mappings must include both on and off values if a mapping is used. A numeric
+switch DP can omit the mapping and uses `1`/`0`; a boolean switch uses
+`true`/`false`.
+
+A complete generic example:
+
+```json
+{
+  "profiles": [
+    {
+      "id": "generic-demo",
+      "name": "Generic demo device",
+      "description": "Temperature, relay, target, mode and fault",
+      "detect": {"require": [1, 2, 3], "priority": 12},
+      "entities": [
+        {
+          "entity": "sensor",
+          "name": "Temperature",
+          "class": "temperature",
+          "category": "diagnostic",
+          "dps": [
+            {"id": 1, "type": "integer", "name": "sensor", "unit": "C",
+             "scale": 10, "class": "measurement", "precision": 1}
+          ]
+        },
+        {
+          "entity": "switch",
+          "name": "Relay",
+          "dps": [{"id": 2, "type": "boolean", "name": "switch"}]
+        },
+        {
+          "entity": "number",
+          "name": "Target",
+          "class": "temperature",
+          "dps": [
+            {"id": 3, "type": "integer", "name": "value", "unit": "C",
+             "scale": 10, "range": {"min": 5, "max": 35, "step": 0.5}}
+          ]
+        },
+        {
+          "entity": "select",
+          "name": "Mode",
+          "dps": [
+            {"id": 4, "type": "string", "name": "option",
+             "mapping": [
+               {"dps_val": "auto", "value": "Auto"},
+               {"dps_val": "manual", "value": "Manual"}
+             ]}
+          ]
+        },
+        {
+          "entity": "binary_sensor",
+          "name": "Fault",
+          "class": "problem",
+          "dps": [
+            {"id": 5, "type": "bitfield", "name": "sensor",
+             "mapping": [
+               {"dps_val": 0, "value": false},
+               {"value": true}
+             ]}
+          ]
+        },
+        {
+          "entity": "text",
+          "name": "Schedule",
+          "dps": [{"id": 7, "type": "string", "name": "value"}]
+        }
+      ]
+    }
+  ]
+}
+```
+
+If `detect.require` is omitted, the base derives up to eight required DPs from
+the non-optional primary DPs of the entities. Add an explicit `detect.require`
+list when the device does not report all primary DPs in one snapshot, or set it
+to an empty array to make the profile manual-only. A profile with no required DPs
+is never selected automatically but can be selected manually.
+
+For each generic entity the base publishes:
+
+- discovery under `<discovery-prefix>/<component>/<ha-device-id>/profile_eN/config`;
+- state under `<state-topic>/entities/eN` as a JSON object keyed by DP name;
+- commands under `<command-base>/generic/eN`.
+
+The entity suffix `eN` is stable for a descriptor's entity order. Existing
+built-in profiles keep their original entity IDs; generic profiles use
+`tuya_<device-name>_profile_eN` suggested IDs. When commands are disabled in the
+web UI, writable generic entities are published as read-only sensors.
+
+The legacy manual subset still does not implement the full tuya-local schema.
+Use the browser catalog for `value_redirect`, `constraint`/`conditions`,
+bitfields, packed/base64/hex/json/unixtime DPs, climate/light/cover/fan/lock
+and the other native platforms. Vacuums use decomposed controls in the browser
+path; the raw-DP sensor keeps all vacuum DPs visible. The browser converter and Jinja mapping
+engine implement those; the raw-DP sensor preserves any DP the native platform
+does not surface separately.
+
+#### Legacy `state`/`control` descriptors
+
+The built-in Feyree and F-OBZ2 profiles, and existing compact custom profiles,
+use the legacy state/control map. New generic devices should use `entities`
+instead. The legacy example below is still useful for EV chargers because it
+maps directly to the stable charger state model.
+
+```json
+{
+  "profiles": [
+    {
+      "id": "my-obz2",
+      "name": "My OBZ2 clone",
+      "description": "Example single-phase TuyaMCU-style map",
+      "phases": 1,
+      "detect": {
+        "require": [102, 105, 109],
+        "exclude": [103],
+        "priority": 15
+      },
+      "state": {
+        "status": {"dp": 101, "type": "text", "fallback": 3},
+        "auth": {"dp": 101, "type": "text"},
+        "fault": {"dp": 10},
+        "voltage_l1": {"dp": 102, "scale": 0.1},
+        "current_l1": {"dp": 105, "scale": 0.1},
+        "power": {"dp": 109, "scale": 100},
+        "session_energy": {"dp": 112, "scale": 10},
+        "temperature": {"dp": 110, "scale": 0.1},
+        "current_limit": {"dp": 115},
+        "charge_seconds": {"dp": 120, "type": "duration_hms"},
+        "charge_enable": {"dp": 124, "type": "int", "on": "0"},
+        "schedule": {"dp": 14, "type": "text_contains", "match": "schedule"}
+      },
+      "control": {
+        "charge": {"dp": 124, "type": "int", "on": 0, "off": 1},
+        "current": {"dp": 115}
+      }
+    }
+  ]
+}
+```
+
+#### `state` fields
+
+All fields are optional, but at least one must be present. Each field is an
+object with a DP number and an optional type and scale.
+
+| Key | Published state | Expected base unit |
+|---|---|---|
+| `status` | `status` | text; use `fallback` for a secondary DP |
+| `auth` | `waiting_for_authorization` | `wait_rfid` when true |
+| `fault` | `fault` | raw bitfield |
+| `voltage_l1/l2/l3` | phase voltage | volts |
+| `current_l1/l2/l3` | phase current | amps |
+| `power` | `power` | watts |
+| `energy` | total energy | Wh |
+| `session_energy` | session energy | Wh |
+| `temperature` | temperature | °C |
+| `current_limit` | current limit | amps |
+| `current_limit_alt` | fallback current limit | amps |
+| `charge_seconds` | session duration | seconds |
+| `charge_seconds_alt` | fallback duration | seconds |
+| `charge_enable` | `charge_control` | boolean state |
+| `rfid` | `rfid` | boolean state |
+| `schedule` | `schedule` | boolean state |
+| `delay` | `delay_hours` | hours |
+
+`scale` converts the raw DP value to the unit in this table. For example, a raw
+power value of `44` in units of 100 W uses `"scale": 100`; a raw temperature of
+`294` in units of 0.1 °C uses `"scale": 0.1`.
+
+Field types:
+
+| Type | Meaning |
+|---|---|
+| `int` | default; integer or numeric string, multiplied by `scale` |
+| `bool` | Tuya boolean |
+| `text` | string; compare against the comma-separated `on`/`match` list |
+| `text_contains` | string; true when it contains `match` |
+| `duration_hms` | `HH:MM:SS` text |
+| `duration_hours` | integer hours, multiplied by 3600 and `scale` |
+| `duration_tenth_hours` | integer tenths of an hour, multiplied by 360 and `scale` |
+| `voltage_auto` | values above 500 are treated as 0.1 V; lower values as volts |
+
+For `charge_enable`, an integer field with `"on": "0"` means raw `0` is enabled.
+A text field accepts a comma-separated list, for example
+`"on": "opencharging,charge,on"`. A boolean field tests the boolean value.
+
+For `schedule`, the default `text_contains` match is `schedule`.
+
+#### `control` fields
+
+`control` is optional. Missing control fields reject the corresponding MQTT
+command for that profile; the rest of the state map still works.
+
+| Key | Fields | Meaning |
+|---|---|---|
+| `charge` | `dp`, `type`, `on`, `off` | Charge/stop command |
+| `current` | `dp` | Current-limit command, value in amps |
+| `delay` | `dp`, `sets_mode` | Delay in hours; optionally also writes a mode |
+| `mode` | `dp`, `now`, `schedule` | Mode command strings |
+
+`charge.type` is one of:
+
+- `bool` — write JSON `true`/`false`. `on`/`off` default to `true`/`false`;
+  `1`/`0` are accepted and normalized;
+- `int` — write the numeric `on`/`off` values;
+- `string` — write the `on`/`off` strings, for example `OpenCharging` and
+  `CloseCharging`.
+
+If `charge.type` is omitted, it defaults to `string`.
+
+The `mode` values are the wire strings used by the MQTT mode command. An MQTT
+`charge_now` (or `now`) command writes `mode.now`; `charge_schedule` (or
+`schedule`) writes `mode.schedule`. This lets a custom profile use different
+Tuya values. `delay.sets_mode` writes `mode.schedule` when the requested delay
+is greater than zero and `mode.now` when it is zero. It requires a `mode` object
+in the same profile.
+
+For the single-phase built-in profile, `delay.sets_mode` is true and
+`mode.now`/`mode.schedule` default to `charge_now`/`charge_schedule`. The
+three-phase built-in profile writes only DP 118 for delay; it does not touch the
+mode DP. F-OBZ2 has no delay or mode control.
+
+#### `detect` fields
+
+`detect.require` lists DP IDs that must be present in the snapshot.
+`detect.exclude` lists DP IDs that must be absent. `detect.priority` is 0–255.
+
+A custom profile with no required DPs is never chosen by auto-detection. For a
+generic `entities` profile, omitting `detect.require` derives up to eight
+required DPs from the non-optional primary DPs. An explicit empty `require`
+array makes the profile manual-only. It can still be selected manually; in that
+case it matches any snapshot and the user is responsible for selecting the right
+map. Keep `require` specific if several profiles are loaded.
+
+#### Selection and mismatch behavior
+
+- `auto` selects the highest-priority matching profile and falls back to the
+  read-only fallback when none match.
+- A manually selected profile is used for state decoding even if it does not
+  match the snapshot.
+- `profile_match` is `false` for a mismatch or for the fallback profile.
+- Control is rejected when `profile_match` is false.
+- `profile_detected` always shows what auto-detection would choose, even when a
+  manual profile is active.
+- To delete a custom profile, switch the selection to `auto` or a built-in
+  profile in the same save.
+
 ## Capturing a device's DP map
 
 ### Bench setup
@@ -299,8 +693,8 @@ Always capture the actual map before enabling control.
 | Tuya IoT Platform device debug | cloud-side DP logs |
 | `tuya-local` diagnostics | DPs used by Home Assistant |
 
-Keep the DP numbers and scales in the firmware configuration. Keep the device ID
-and local key in the remote node's NVS-backed web UI.
+Keep the DP numbers and scales in the base node's profile selection or custom
+JSON. Keep the device ID and local key in the remote node's NVS-backed web UI.
 
 ## Offline local control
 
@@ -326,6 +720,10 @@ simpler integration:
   entities as supported by the model.
 
 The LoRa bridge is for installations where direct WiFi coverage is unavailable.
+The generic `entities` profile schema is deliberately modelled on tuya-local's
+device descriptors, so an existing descriptor can usually be reduced to its
+`entities` list and given an explicit `detect.require` list. Unsupported
+tuya-local features are listed in the generic-profile section above.
 
 ## References
 

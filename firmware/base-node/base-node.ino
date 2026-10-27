@@ -22,12 +22,17 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <esp_system.h>
+#include <math.h>
 #include <time.h>
 
 #include "boot_guard.h"
+#include "browser_profile.h"
 #include "config.h"
 #include "config_store.h"
+#include "entities.h"
+#include "ha_discovery.h"
 #include "lora_protocol.h"
+#include "profiles.h"
 #include "sd_update.h"
 #include "web_ui.h"
 
@@ -82,16 +87,41 @@ size_t dpJsonLen = 0;
 uint32_t dpLastAckMs = 0;
 uint8_t dpAckAttempts = 0;
 
-enum DpProfile : uint8_t {
-  DP_PROFILE_UNKNOWN = 0,
-  DP_PROFILE_SINGLE,
-  DP_PROFILE_THREE,
-  DP_PROFILE_OBZ2,
-  DP_PROFILE_FALLBACK,
-};
-
-DpProfile dpProfile = DP_PROFILE_UNKNOWN;
+// The active profile is chosen from the NVS selection (or auto-detected) for
+// every snapshot. The selected profile owns both state decoding and command
+// encoding; the remote node stays a raw DP proxy.
+const ProfileDef *activeProfile = nullptr;
+const ProfileDef *detectedProfile = nullptr;
+bool profileMatched = false;
+char profileError[96] = "waiting for DP snapshot";
+char lastDiscoveryProfile[24] = {0};
+int lastDiscoveryMode = -1;
+bool discoveryInitialized = false;
+bool legacyDiscoveryCleared = false;
+bool genericDiscoveryCleared = false;
+bool packDiscoveryCleared = false;
 uint8_t lastDelayHours = 0;
+
+const char *profileActiveId() {
+  if (browserProfileSelected()) return browserProfileId();
+  return activeProfile ? activeProfile->id : "unknown";
+}
+
+const char *profileDetectedId() {
+  return detectedProfile ? detectedProfile->id : "unknown";
+}
+
+uint8_t profileEntityCount() {
+  if (browserProfileSelected()) {
+    return static_cast<uint8_t>(browserProfileDiscoveryCount());
+  }
+  const ProfileDef *profile = activeProfile;
+  if (!profile && strcmp(settings.profileId, "auto") != 0) {
+    profile = profileFind(settings.profileId);
+  }
+  if (!profile) profile = detectedProfile;
+  return profile ? profile->genericEntityCount : 0;
+}
 
 // Command state. Control is sent as a raw Tuya "dps" JSON fragment, so the
 // remote node stays a dumb DP proxy and does not need a model-specific map.
@@ -284,16 +314,20 @@ void drawScreen() {
     display.println(haveSeen ? "offline" : "waiting");
   }
 
-  display.print("Charger: ");
-  display.println(haveState ? statusName(lastStatus.status) : "unknown");
-
-  display.print("Power: ");
-  if (haveState) {
-    display.print(lastStatus.powerW / 1000.0f, 2);
-    display.println(" kW");
+  display.print("Device: ");
+  if (!haveState) {
+    display.println("unknown");
+  } else if (!profileMatched) {
+    display.println("mismatch");
   } else {
-    display.println("--");
+    display.println("available");
   }
+
+  display.print("Profile: ");
+  String profileLabel = browserProfileSelected() ? String(browserProfileName())
+                                                  : String(profileActiveId());
+  if (profileLabel.length() > 13) profileLabel = profileLabel.substring(0, 13);
+  display.println(profileLabel);
 
   display.print("LoRa: ");
   if (haveSeen) {
@@ -527,6 +561,23 @@ void publishDpJson() {
   if (dpJsonLen == 0) return;
   if (mqtt.connected()) {
     mqtt.publish(settings.mqttTopicDps, dpJson, true);
+    if (browserProfileSelected()) {
+      JsonDocument perDpDoc;
+      const DeserializationError err = deserializeJson(perDpDoc, dpJson);
+      if (!err && perDpDoc["dps"].is<JsonObject>()) {
+        JsonObject dps = perDpDoc["dps"].as<JsonObject>();
+        for (JsonPair kv : dps) {
+          String topic = String(settings.mqttTopicDps) + "/" + kv.key().c_str();
+          String value;
+          if (kv.value().is<const char *>()) {
+            value = kv.value().as<const char *>();
+          } else {
+            serializeJson(kv.value(), value);
+          }
+          mqtt.publish(topic.c_str(), value.c_str(), true);
+        }
+      }
+    }
   }
   Serial.printf("[dp] raw JSON %u bytes: %s\n", (unsigned)dpJsonLen, dpJson);
 }
@@ -608,22 +659,215 @@ uint8_t statusFromDpText(const String &raw) {
   return ST_UNKNOWN;
 }
 
-const char *profileName(DpProfile p) {
-  switch (p) {
-    case DP_PROFILE_SINGLE: return "single-phase";
-    case DP_PROFILE_THREE: return "3-phase";
-    case DP_PROFILE_OBZ2: return "F-OBZ2";
-    case DP_PROFILE_FALLBACK: return "fallback";
-    default: return "unknown";
-  }
-}
-
 uint32_t parseDurationText(const String &s) {
   int h = 0, m = 0, sec = 0;
   if (sscanf(s.c_str(), "%d:%d:%d", &h, &m, &sec) == 3) {
     return static_cast<uint32_t>(h) * 3600 + m * 60 + sec;
   }
   return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Profile state mapping
+// ---------------------------------------------------------------------------
+static bool fieldPresent(JsonObject dps, const ProfileField &field) {
+  if (!field.present()) return false;
+  char key[8];
+  snprintf(key, sizeof(key), "%u", field.dp);
+  return dpHas(dps, key);
+}
+
+static long fieldInt(JsonObject dps, const ProfileField &field) {
+  char key[8];
+  snprintf(key, sizeof(key), "%u", field.dp);
+  return dpInt(dps, key);
+}
+
+static String fieldStr(JsonObject dps, const ProfileField &field) {
+  char key[8];
+  snprintf(key, sizeof(key), "%u", field.dp);
+  return dpStr(dps, key);
+}
+
+static bool fieldBool(JsonObject dps, const ProfileField &field) {
+  char key[8];
+  snprintf(key, sizeof(key), "%u", field.dp);
+  return dpBool(dps, key);
+}
+
+static float fieldScaled(JsonObject dps, const ProfileField &field) {
+  return static_cast<float>(fieldInt(dps, field)) * field.scale;
+}
+
+static bool textInList(const String &raw, const char *list) {
+  String value = raw;
+  value.trim();
+  value.toLowerCase();
+
+  if (!list || !*list) {
+    return value.length() > 0 && value != "0" && value != "false" &&
+           value != "off" && value != "closecharging";
+  }
+
+  String choices(list);
+  choices.toLowerCase();
+  int start = 0;
+  while (start <= static_cast<int>(choices.length())) {
+    const int comma = choices.indexOf(',', start);
+    String item = comma < 0 ? choices.substring(start)
+                            : choices.substring(start, comma);
+    item.trim();
+    if (item.length() > 0 && value == item) return true;
+    if (comma < 0) break;
+    start = comma + 1;
+  }
+  return false;
+}
+
+static bool fieldFlag(JsonObject dps, const ProfileField &field) {
+  if (!fieldPresent(dps, field)) return false;
+  switch (field.type) {
+    case PF_BOOL:
+      return fieldBool(dps, field);
+    case PF_INT: {
+      const long raw = fieldInt(dps, field);
+      if (field.match[0]) return raw == atol(field.match);
+      return raw != 0;
+    }
+    case PF_TEXT:
+      return textInList(fieldStr(dps, field), field.match);
+    case PF_TEXT_CONTAINS: {
+      String value = fieldStr(dps, field);
+      value.trim();
+      value.toLowerCase();
+      String needle(field.match);
+      needle.toLowerCase();
+      return needle.length() == 0 ? value.length() > 0
+                                  : value.indexOf(needle) >= 0;
+    }
+    default:
+      return false;
+  }
+}
+
+static uint32_t fieldDuration(JsonObject dps, const ProfileField &field) {
+  if (!fieldPresent(dps, field)) return 0;
+  if (field.type == PF_DURATION_HMS) {
+    return parseDurationText(fieldStr(dps, field));
+  }
+  const long raw = fieldInt(dps, field);
+  if (field.type == PF_DURATION_HOURS) {
+    return clampU32(lroundf(raw * 3600.0f * field.scale));
+  }
+  if (field.type == PF_DURATION_TENTH_HOURS) {
+    return clampU32(lroundf(raw * 360.0f * field.scale));
+  }
+  return 0;
+}
+
+static void applyProfileState(JsonObject dps, const ProfileDef &profile,
+                              StatusData &state, uint8_t &delayHours) {
+  state = StatusData();
+
+  String statusText;
+  if (fieldPresent(dps, profile.state.status)) {
+    statusText = fieldStr(dps, profile.state.status);
+  } else if (fieldPresent(dps, profile.state.statusFallback)) {
+    statusText = fieldStr(dps, profile.state.statusFallback);
+  }
+  state.status = statusFromDpText(statusText);
+
+  String statusLower = statusText;
+  statusLower.trim();
+  statusLower.toLowerCase();
+  String authLower;
+  if (fieldPresent(dps, profile.state.statusAuth)) {
+    authLower = fieldStr(dps, profile.state.statusAuth);
+  } else {
+    authLower = statusText;
+  }
+  authLower.trim();
+  authLower.toLowerCase();
+  state.waitingForRfid =
+      (statusLower == "wait_rfid" || authLower == "wait_rfid");
+
+  if (fieldPresent(dps, profile.state.fault)) {
+    state.faultFlags = clampU16(fieldInt(dps, profile.state.fault));
+  }
+  if (fieldPresent(dps, profile.state.power)) {
+    state.powerW = clampU16(lroundf(fieldScaled(dps, profile.state.power)));
+  }
+  if (fieldPresent(dps, profile.state.energy)) {
+    state.energyWh = clampU32(lroundf(fieldScaled(dps, profile.state.energy)));
+  }
+  if (fieldPresent(dps, profile.state.sessionEnergy)) {
+    state.sessionWh =
+        clampU32(lroundf(fieldScaled(dps, profile.state.sessionEnergy)));
+  }
+  if (fieldPresent(dps, profile.state.temperature)) {
+    state.tempDc =
+        clampI16(lroundf(fieldScaled(dps, profile.state.temperature) * 10.0f));
+  }
+
+  if (fieldPresent(dps, profile.state.voltageL1)) {
+    if (profile.state.voltageL1.type == PF_VOLTAGE_AUTO) {
+      const long raw = fieldInt(dps, profile.state.voltageL1);
+      const float volts = raw > 500 ? raw / 10.0f : static_cast<float>(raw);
+      state.voltageL1dV = clampU16(lroundf(volts * 10.0f));
+    } else {
+      state.voltageL1dV = clampU16(
+          lroundf(fieldScaled(dps, profile.state.voltageL1) * 10.0f));
+    }
+  }
+  if (fieldPresent(dps, profile.state.voltageL2)) {
+    state.voltageL2dV = clampU16(
+        lroundf(fieldScaled(dps, profile.state.voltageL2) * 10.0f));
+  }
+  if (fieldPresent(dps, profile.state.voltageL3)) {
+    state.voltageL3dV = clampU16(
+        lroundf(fieldScaled(dps, profile.state.voltageL3) * 10.0f));
+  }
+  if (fieldPresent(dps, profile.state.currentL1)) {
+    state.currentL1dA = clampU16(
+        lroundf(fieldScaled(dps, profile.state.currentL1) * 10.0f));
+  }
+  if (fieldPresent(dps, profile.state.currentL2)) {
+    state.currentL2dA = clampU16(
+        lroundf(fieldScaled(dps, profile.state.currentL2) * 10.0f));
+  }
+  if (fieldPresent(dps, profile.state.currentL3)) {
+    state.currentL3dA = clampU16(
+        lroundf(fieldScaled(dps, profile.state.currentL3) * 10.0f));
+  }
+
+  if (fieldPresent(dps, profile.state.currentLimit)) {
+    state.currentLimit =
+        clampU8(lroundf(fieldScaled(dps, profile.state.currentLimit)));
+  } else if (fieldPresent(dps, profile.state.currentLimitAlt)) {
+    state.currentLimit =
+        clampU8(lroundf(fieldScaled(dps, profile.state.currentLimitAlt)));
+  }
+
+  if (fieldPresent(dps, profile.state.chargeSeconds)) {
+    state.chargeSeconds = fieldDuration(dps, profile.state.chargeSeconds);
+  } else if (fieldPresent(dps, profile.state.chargeSecondsAlt)) {
+    state.chargeSeconds = fieldDuration(dps, profile.state.chargeSecondsAlt);
+  }
+
+  state.chargeEnabled = fieldFlag(dps, profile.state.chargeEnable);
+  state.rfidActive = fieldFlag(dps, profile.state.rfid);
+  state.scheduleActive = fieldFlag(dps, profile.state.schedule);
+  delayHours = fieldPresent(dps, profile.state.delay)
+                   ? clampU8(lroundf(fieldScaled(dps, profile.state.delay)))
+                   : 0;
+
+  // Some 3-phase firmware reports only the session energy (DP 112) and no
+  // separate charge_energy_once (DP 25). Avoid publishing session_energy=0 in
+  // that case.
+  if (!fieldPresent(dps, profile.state.sessionEnergy) &&
+      state.sessionWh == 0 && state.energyWh > 0) {
+    state.sessionWh = state.energyWh;
+  }
 }
 
 void applyDpJson() {
@@ -650,145 +894,97 @@ void applyDpJson() {
     return;
   }
 
-  const bool has3 = dpHas(dps, "103") && dpHas(dps, "104") &&
-                    dpHas(dps, "105") && dpHas(dps, "106") &&
-                    dpHas(dps, "107");
-  const bool has1 = dpHas(dps, "106") && dpHas(dps, "107") &&
-                    dpHas(dps, "108");
-  const bool hasObz2 = dpHas(dps, "102") && dpHas(dps, "105") &&
-                       dpHas(dps, "109") && !has1 && !has3;
-
-  DpProfile profile = has3 ? DP_PROFILE_THREE
-                      : has1 ? DP_PROFILE_SINGLE
-                      : hasObz2 ? DP_PROFILE_OBZ2
-                                : DP_PROFILE_FALLBACK;
-  dpProfile = profile;
+  detectedProfile = profileAutoDetect(dps);
+  const bool packMode = browserProfileSelected();
+  const bool autoMode = !packMode && strcmp(settings.profileId, "auto") == 0;
+  const ProfileDef *selected =
+      (packMode || autoMode) ? nullptr : profileFind(settings.profileId);
 
   StatusData st;
+  uint8_t delayHours = 0;
 
-  String statusText;
-  if (has3 && dpHas(dps, "3")) {
-    statusText = dpStr(dps, "3");
-  } else if (dpHas(dps, "101")) {
-    statusText = dpStr(dps, "101");
-  } else if (dpHas(dps, "3")) {
-    statusText = dpStr(dps, "3");
-  }
-  st.status = statusFromDpText(statusText);
-
-  // DP 101 is the authoritative authorization state on the 3-phase profile,
-  // even when DP 3 is present as the charger's own status string.
-  String statusLower = statusText;
-  statusLower.trim();
-  statusLower.toLowerCase();
-  String dp101 = dpStr(dps, "101");
-  dp101.trim();
-  dp101.toLowerCase();
-  st.waitingForRfid = (statusLower == "wait_rfid" || dp101 == "wait_rfid");
-
-  if (dpHas(dps, "10")) st.faultFlags = clampU16(dpInt(dps, "10"));
-
-  // Common fields across the known charger profiles.
-  if (dpHas(dps, "109")) st.powerW = clampU16(dpInt(dps, "109") * 100);
-  if (dpHas(dps, "110")) st.tempDc = clampI16(dpInt(dps, "110"));
-  if (dpHas(dps, "25")) st.sessionWh = clampU32(dpInt(dps, "25") * 1000);
-
-  if (has3) {
-    st.voltageL1dV = clampU16(dpInt(dps, "102"));
-    st.voltageL2dV = clampU16(dpInt(dps, "103"));
-    st.voltageL3dV = clampU16(dpInt(dps, "104"));
-    st.currentL1dA = clampU16(dpInt(dps, "105"));
-    st.currentL2dA = clampU16(dpInt(dps, "106"));
-    st.currentL3dA = clampU16(dpInt(dps, "107"));
-    st.energyWh = clampU32(dpInt(dps, "112") * 100);
-    if (dpHas(dps, "115")) {
-      st.currentLimit = clampU8(dpInt(dps, "115"));
-    } else if (dpHas(dps, "114")) {
-      st.currentLimit = clampU8(dpInt(dps, "114"));
+  if (packMode) {
+    activeProfile = nullptr;
+    profileMatched = browserProfileMatches(dps);
+    if (profileMatched) {
+      profileError[0] = '\0';
+    } else {
+      snprintf(profileError, sizeof(profileError),
+               "selected browser pack '%s' does not match this DP snapshot",
+               browserProfileId());
     }
-    // DP 119 is the configured maximum charging duration. The live session
-    // timer is DP 120 (e.g. "00:02:50"); do not use 119 for chargeSeconds.
-    if (dpHas(dps, "120")) {
-      st.chargeSeconds = parseDurationText(dpStr(dps, "120"));
+    applyProfileState(dps, *profilesFallback(), st, delayHours);
+  } else if (autoMode) {
+    activeProfile = detectedProfile ? detectedProfile : profilesFallback();
+    profileMatched = activeProfile != profilesFallback();
+    if (profileMatched) {
+      profileError[0] = '\0';
+    } else {
+      snprintf(profileError, sizeof(profileError),
+               "no built-in or custom profile matched this DP snapshot");
     }
-    // DP 124 is the charging-control state: OpenCharging = enabled,
-    // CloseCharging = stopped/disabled. This is independent of whether the
-    // car is actively drawing power (status DP 101).
-    if (dpHas(dps, "124")) {
-      String charge = dpStr(dps, "124");
-      charge.toLowerCase();
-      if (charge == "opencharging" || charge == "charge" || charge == "on") {
-        st.chargeEnabled = true;
-      }
+    applyProfileState(dps, *activeProfile, st, delayHours);
+  } else if (selected) {
+    activeProfile = selected;
+    profileMatched = profileMatches(*selected, dps);
+    if (profileMatched) {
+      profileError[0] = '\0';
+    } else {
+      snprintf(profileError, sizeof(profileError),
+               "selected profile '%s' does not match this DP snapshot",
+               selected->id);
     }
-    if (dpHas(dps, "123") && dpBool(dps, "123")) st.rfidActive = true;
-  } else if (has1) {
-    st.currentLimit = clampU8(dpInt(dps, "102"));
-    st.energyWh = clampU32(dpInt(dps, "106") * 100);
-    long v = dpInt(dps, "107");
-    // Some firmware reports 231.2 V as 2312, others as 231.
-    st.voltageL1dV = clampU16(v > 500 ? v : v * 10);
-    st.currentL1dA = clampU16(dpInt(dps, "108"));
-    if (dpHas(dps, "114")) {
-      st.chargeSeconds = clampU32(dpInt(dps, "114") * 3600);
-    } else if (dpHas(dps, "113")) {
-      st.chargeSeconds = clampU32(dpInt(dps, "113") * 360);
-    }
-    if (dpHas(dps, "112") && dpBool(dps, "112"))
-      st.chargeEnabled = true;
-    if (dpHas(dps, "123") && dpBool(dps, "123")) st.rfidActive = true;
-  } else if (hasObz2) {
-    st.voltageL1dV = clampU16(dpInt(dps, "102"));
-    st.currentL1dA = clampU16(dpInt(dps, "105"));
-    st.currentLimit = clampU8(dpInt(dps, "115"));
-    st.sessionWh = clampU32(dpInt(dps, "112") * 10);
-    if (dpHas(dps, "120")) {
-      st.chargeSeconds = parseDurationText(dpStr(dps, "120"));
-    }
-    // F-OBZ2 uses a numeric DP 124: 0 = charging enabled, 1 = stopped.
-    if (dpHas(dps, "124") && dpInt(dps, "124") == 0)
-      st.chargeEnabled = true;
+    applyProfileState(dps, *activeProfile, st, delayHours);
+  } else {
+    activeProfile = profilesFallback();
+    profileMatched = false;
+    snprintf(profileError, sizeof(profileError),
+             "selected profile '%s' is not loaded", settings.profileId);
+    applyProfileState(dps, *activeProfile, st, delayHours);
   }
+  if (!packMode && !activeProfile) activeProfile = profilesFallback();
 
-  // Some 3-phase firmware reports only the session energy (DP 112) and no
-  // separate charge_energy_once (DP 25). Avoid publishing session_energy=0 in
-  // that case.
-  if (!dpHas(dps, "25") && st.sessionWh == 0 && st.energyWh > 0) {
-    st.sessionWh = st.energyWh;
-  }
-
-  lastDelayHours = 0;
-  if (has1 && dpHas(dps, "104")) {
-    lastDelayHours = clampU8(dpInt(dps, "104"));
-  } else if (has3 && dpHas(dps, "118")) {
-    lastDelayHours = clampU8(dpInt(dps, "118"));
-  }
-
-  if (dpHas(dps, "14")) {
-    String mode = dpStr(dps, "14");
-    mode.toLowerCase();
-    if (mode.indexOf("schedule") >= 0) st.scheduleActive = true;
-  }
-
+  lastDelayHours = delayHours;
   lastStatus = st;
   haveState = true;
 
   if (mqtt.connected()) {
+    const int mode =
+        packMode ? 2
+                 : (activeProfile && activeProfile->hasGenericEntities() ? 1 : 0);
+    const char *activeId =
+        packMode ? browserProfileId()
+                 : (activeProfile ? activeProfile->id : "fallback");
+    const bool discoveryChanged =
+        !discoveryInitialized || strcmp(lastDiscoveryProfile, activeId) != 0 ||
+        lastDiscoveryMode != mode;
+    if (discoveryChanged) {
+      publishDiscovery();
+    } else if (mode == 1 && activeProfile) {
+      genericPublishState(*activeProfile, dps);
+    }
+  }
+
+  if (mqtt.connected()) {
     JsonDocument dbg;
-    dbg["profile"] = profileName(profile);
+    dbg["profile"] = profileActiveId();
+    dbg["profile_selected"] = settings.profileId;
+    dbg["profile_detected"] = profileDetectedId();
+    dbg["profile_match"] = profileMatched;
     dbg["status"] = statusName(st.status);
     dbg["dps"] = dps.size();
     dbg["bytes"] = dpJsonLen;
     String out;
-    out.reserve(160);
+    out.reserve(256);
     serializeJson(dbg, out);
     mqtt.publish(settings.mqttTopicDebug, out.c_str(), false);
   }
 
-  Serial.printf("[dp] %s status=%s pwr=%uW temp=%.1fC limit=%uA\n",
-                profileName(profile),
-                statusName(st.status), st.powerW, st.tempDc / 10.0f,
-                st.currentLimit);
+  Serial.printf(
+      "[dp] active=%s detected=%s match=%u status=%s pwr=%uW temp=%.1fC "
+      "limit=%uA\n",
+      profileActiveId(), profileDetectedId(), profileMatched ? 1 : 0,
+      statusName(st.status), st.powerW, st.tempDc / 10.0f, st.currentLimit);
 
   publishState();
 }
@@ -936,6 +1132,31 @@ void rejectCommand(const char *name, const String &reason) {
   publishCommandResultNamed(name, "rejected", reason);
 }
 
+String jsonQuoted(const char *text) {
+  String out = "\"";
+  for (const char *p = text; p && *p; ++p) {
+    switch (*p) {
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if (static_cast<unsigned char>(*p) < 0x20) {
+          char escaped[7];
+          snprintf(escaped, sizeof(escaped), "\\u%04x",
+                   static_cast<unsigned char>(*p));
+          out += escaped;
+        } else {
+          out += *p;
+        }
+        break;
+    }
+  }
+  out += "\"";
+  return out;
+}
+
 bool sendDpSet(const String &dpsJson, const char *name) {
   if (!settings.enableCommands) {
     publishCommandResultNamed(name, "disabled", "commands disabled");
@@ -949,8 +1170,15 @@ bool sendDpSet(const String &dpsJson, const char *name) {
     publishCommandResultNamed(name, "busy", "DP snapshot in progress");
     return false;
   }
-  if (dpProfile == DP_PROFILE_UNKNOWN || dpProfile == DP_PROFILE_FALLBACK) {
-    publishCommandResultNamed(name, "unsupported_profile", profileName(dpProfile));
+  if (browserProfileSelected()) {
+    if (!profileMatched) {
+      publishCommandResultNamed(name, "unsupported_profile",
+                                "browser pack does not match last snapshot");
+      return false;
+    }
+  } else if (!activeProfile || !profileMatched ||
+             activeProfile == profilesFallback()) {
+    publishCommandResultNamed(name, "unsupported_profile", profileActiveId());
     return false;
   }
   if (dpsJson.length() == 0 || dpsJson.length() > LORA_MAX_PAYLOAD) {
@@ -977,23 +1205,19 @@ bool sendDpSet(const String &dpsJson, const char *name) {
 }
 
 bool sendChargeDp(bool on, const char *name) {
-  if (dpProfile == DP_PROFILE_THREE) {
-    String frag = "{\"" + String(settings.dpThreeChargeId) + "\":\"" +
-                  (on ? "OpenCharging" : "CloseCharging") + "\"}";
-    return sendDpSet(frag, name);
+  if (!activeProfile || !activeProfile->control.hasCharge()) {
+    rejectCommand(name, "profile has no known charge DP");
+    return false;
   }
-  if (dpProfile == DP_PROFILE_SINGLE) {
-    String frag = "{\"" + String(settings.dpSingleChargeId) + "\":" +
-                  (on ? "true" : "false") + "}";
-    return sendDpSet(frag, name);
+  const ProfileControl &control = activeProfile->control;
+  String frag = "{\"" + String(control.chargeDp) + "\":";
+  if (control.chargeType == PCT_STRING) {
+    frag += jsonQuoted(on ? control.chargeOn : control.chargeOff);
+  } else {
+    frag += on ? control.chargeOn : control.chargeOff;
   }
-  if (dpProfile == DP_PROFILE_OBZ2) {
-    String frag = "{\"" + String(settings.dpObz2ChargeId) + "\":" + (on ? "0" : "1") +
-                  "}";
-    return sendDpSet(frag, name);
-  }
-  rejectCommand(name, "profile has no known charge DP");
-  return false;
+  frag += "}";
+  return sendDpSet(frag, name);
 }
 
 void commandCharge(bool on) {
@@ -1007,18 +1231,12 @@ void commandCurrent(long amps) {
                       String(settings.maxCurrent) + " A");
     return;
   }
-
-  String frag;
-  if (dpProfile == DP_PROFILE_SINGLE) {
-    frag = "{\"" + String(settings.dpSingleCurrentId) + "\":" + String(amps) + "}";
-  } else if (dpProfile == DP_PROFILE_THREE) {
-    frag = "{\"" + String(settings.dpThreeCurrentId) + "\":" + String(amps) + "}";
-  } else if (dpProfile == DP_PROFILE_OBZ2) {
-    frag = "{\"" + String(settings.dpObz2CurrentId) + "\":" + String(amps) + "}";
-  } else {
+  if (!activeProfile || !activeProfile->control.hasCurrent()) {
     rejectCommand("current_limit", "profile has no known current DP");
     return;
   }
+  const ProfileControl &control = activeProfile->control;
+  String frag = "{\"" + String(control.currentDp) + "\":" + String(amps) + "}";
   sendDpSet(frag, "current_limit");
 }
 
@@ -1028,41 +1246,48 @@ void commandDelay(long hours) {
                                "-" + String(settings.maxDelayH) + " h");
     return;
   }
-
-  const char *mode = hours > 0 ? "charge_schedule" : "charge_now";
-  String frag;
-  if (dpProfile == DP_PROFILE_SINGLE) {
-    frag = "{\"" + String(settings.dpSingleDelayId) + "\":" + String(hours) +
-           ",\"" + String(settings.dpSingleModeId) + "\":\"" + mode + "\"}";
-  } else if (dpProfile == DP_PROFILE_THREE) {
-    // The confirmed 3-phase profile writes only the delayed-start DP (118).
-    // DP 14 is not part of the confirmed delay path; leave it untouched.
-    frag = "{\"" + String(settings.dpThreeDelayId) + "\":" + String(hours) + "}";
-  } else {
+  if (!activeProfile || !activeProfile->control.hasDelay()) {
     rejectCommand("delay", "profile has no known delay DP");
     return;
   }
+  const ProfileControl &control = activeProfile->control;
+  String frag = "{\"" + String(control.delayDp) + "\":" + String(hours);
+  if (control.delaySetsMode && control.hasMode()) {
+    const char *mode = hours > 0 ? control.modeSchedule : control.modeNow;
+    frag += ",\"" + String(control.modeDp) + "\":" + jsonQuoted(mode);
+  }
+  frag += "}";
   sendDpSet(frag, "delay");
 }
 
 void commandMode(const String &modeRaw) {
-  String mode = modeRaw;
-  mode.trim();
-  mode.toLowerCase();
-  if (mode == "now") mode = "charge_now";
-  if (mode == "schedule") mode = "charge_schedule";
-  if (mode != "charge_now" && mode != "charge_schedule" &&
-      mode != "charge_pct" && mode != "charge_energy") {
-    rejectCommand("mode", "use charge_now or charge_schedule");
-    return;
-  }
-  if (dpProfile != DP_PROFILE_SINGLE && dpProfile != DP_PROFILE_THREE) {
+  if (!activeProfile || !activeProfile->control.hasMode()) {
     rejectCommand("mode", "profile has no known mode DP");
     return;
   }
-  int modeId =
-      (dpProfile == DP_PROFILE_THREE) ? settings.dpThreeModeId : settings.dpSingleModeId;
-  sendDpSet("{\"" + String(modeId) + "\":\"" + mode + "\"}", "mode");
+
+  String requested = modeRaw;
+  requested.trim();
+  requested.toLowerCase();
+  const ProfileControl &control = activeProfile->control;
+
+  // Map the generic MQTT command to the active profile's wire values. A custom
+  // profile may use different strings than the Feyree defaults.
+  String mode;
+  if (requested == "now" || requested == "charge_now") {
+    mode = control.modeNow;
+  } else if (requested == "schedule" || requested == "charge_schedule") {
+    mode = control.modeSchedule;
+  } else if (requested == "charge_pct" || requested == "charge_energy") {
+    mode = requested;
+  } else {
+    rejectCommand(
+        "mode", "use charge_now, charge_schedule, charge_pct or charge_energy");
+    return;
+  }
+
+  sendDpSet("{\"" + String(control.modeDp) + "\":" + jsonQuoted(mode.c_str()) + "}",
+            "mode");
 }
 
 bool payloadOn(const String &raw) {
@@ -1158,6 +1383,10 @@ void maintainMqtt() {
     mqtt.subscribe(settings.mqttTopicCmdDelay);
     mqtt.subscribe(settings.mqttTopicCmdMode);
     mqtt.subscribe(settings.mqttTopicCmdQuery);
+    const String genericSubscription = genericCommandWildcard();
+    mqtt.subscribe(genericSubscription.c_str());
+    const String packSubscription = browserProfileCommandTopic();
+    mqtt.subscribe(packSubscription.c_str());
   } else {
     Serial.printf("[mqtt] failed rc=%d\n", mqtt.state());
   }
@@ -1234,11 +1463,16 @@ void publishState() {
   doc["temperature"] = lastStatus.tempDc / 10.0f;
   doc["charge_seconds"] = lastStatus.chargeSeconds;
   doc["fw"] = FW_VERSION;
-  doc["profile"] = profileName(dpProfile);
+  doc["profile"] = profileActiveId();
+  doc["profile_selected"] = settings.profileId;
+  doc["profile_detected"] = profileDetectedId();
+  doc["profile_match"] = profileMatched;
+  doc["profile_entities"] = profileEntityCount();
+  if (profileError[0]) doc["profile_error"] = profileError;
   doc["delay_hours"] = lastDelayHours;
 
   String json;
-  json.reserve(768);
+  json.reserve(896);
   serializeJson(doc, json);
 
   if (mqtt.publish(settings.mqttTopicState, json.c_str(), true)) {
@@ -1252,73 +1486,9 @@ void publishState() {
 // ---------------------------------------------------------------------------
 // Home Assistant MQTT discovery
 // ---------------------------------------------------------------------------
-String haSlug(const char *text) {
-  String out;
-  bool lastUnderscore = false;
-  for (const char *p = text; p && *p; ++p) {
-    char c = *p;
-    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-    const bool alnum = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
-    if (alnum) {
-      out += c;
-      lastUnderscore = false;
-    } else if (out.length() > 0 && !lastUnderscore) {
-      out += '_';
-      lastUnderscore = true;
-    }
-  }
-  while (out.length() > 0 && out.charAt(out.length() - 1) == '_') {
-    out.remove(out.length() - 1);
-  }
-  return out;
-}
-
-String haEntityPrefix() {
-  String name = haSlug(settings.haName);
-  if (name.length() == 0) name = "device";
-  if (!name.startsWith("tuya_")) name = String("tuya_") + name;
-  return name;
-}
-
-String haObjectId(const char *suffix) {
-  return haEntityPrefix() + "_" + suffix;
-}
-
-void addCommon(JsonDocument &doc) {
-  doc["availability_topic"] = settings.mqttTopicAvailability;
-  doc["payload_available"] = "online";
-  doc["payload_not_available"] = "offline";
-
-  JsonObject device = doc["device"].to<JsonObject>();
-  JsonArray ids = device["identifiers"].to<JsonArray>();
-  ids.add(settings.haDeviceId);
-  device["name"] = settings.haName;
-  device["manufacturer"] = "";
-  device["model"] = "Tuya device via Tuya LoRa Bridge";
-  device["sw_version"] = FW_VERSION;
-}
-
-bool publishConfig(const String &component, const String &objectId,
-                   JsonDocument &doc) {
-  // HA 2025.9+ uses default_entity_id for the suggested entity ID. Keep
-  // object_id as a fallback for older Home Assistant releases.
-  doc["default_entity_id"] = component + "." + haObjectId(objectId.c_str());
-  String topic = String(settings.haDiscoveryPrefix) + "/" + component + "/" +
-                 settings.haDeviceId + "/" + objectId + "/config";
-  String payload;
-  payload.reserve(768);
-  serializeJson(doc, payload);
-
-  bool ok = mqtt.publish(topic.c_str(), payload.c_str(), true);
-  if (!ok) {
-    Serial.printf("[mqtt] discovery failed: %s\n", topic.c_str());
-  }
-  return ok;
-}
-
 void publishStatusDiscovery() {
   JsonDocument doc;
-  addCommon(doc);
+  addHaCommon(doc);
   doc["name"] = String(settings.haName) + " status";
   const String entityId = haObjectId("status");
   doc["object_id"] = entityId;
@@ -1337,7 +1507,7 @@ void publishStatusDiscovery() {
   options.add("fault");
   options.add("unknown");
 
-  publishConfig("sensor", "status", doc);
+  publishHaConfig("sensor", "status", doc);
 }
 
 void publishSensor(const char *objectId, const String &name,
@@ -1346,7 +1516,7 @@ void publishSensor(const char *objectId, const String &name,
                    const char *icon, int precision = -1,
                    const char *stateTopic = nullptr) {
   JsonDocument doc;
-  addCommon(doc);
+  addHaCommon(doc);
   doc["name"] = name;
   const String entityId = haObjectId(objectId);
   doc["object_id"] = entityId;
@@ -1359,14 +1529,14 @@ void publishSensor(const char *objectId, const String &name,
   if (icon && icon[0]) doc["icon"] = icon;
   if (precision >= 0) doc["suggested_display_precision"] = precision;
 
-  publishConfig("sensor", objectId, doc);
+  publishHaConfig("sensor", objectId, doc);
 }
 
 void publishBinarySensor(const char *objectId, const String &name,
                          const char *valueTemplate, const char *deviceClass,
                          const char *icon) {
   JsonDocument doc;
-  addCommon(doc);
+  addHaCommon(doc);
   doc["name"] = name;
   const String entityId = haObjectId(objectId);
   doc["object_id"] = entityId;
@@ -1376,14 +1546,14 @@ void publishBinarySensor(const char *objectId, const String &name,
   if (deviceClass && deviceClass[0]) doc["device_class"] = deviceClass;
   if (icon && icon[0]) doc["icon"] = icon;
 
-  publishConfig("binary_sensor", objectId, doc);
+  publishHaConfig("binary_sensor", objectId, doc);
 }
 
 void publishSwitchEntity(const char *objectId, const String &name,
                          const char *commandTopic, const char *valueTemplate,
                          const char *icon) {
   JsonDocument doc;
-  addCommon(doc);
+  addHaCommon(doc);
   doc["name"] = name;
   const String entityId = haObjectId(objectId);
   doc["object_id"] = entityId;
@@ -1395,13 +1565,13 @@ void publishSwitchEntity(const char *objectId, const String &name,
   doc["payload_off"] = "OFF";
   if (icon && icon[0]) doc["icon"] = icon;
 
-  publishConfig("switch", objectId, doc);
+  publishHaConfig("switch", objectId, doc);
 }
 
 void publishButtonEntity(const char *objectId, const String &name,
                          const char *commandTopic, const char *icon) {
   JsonDocument doc;
-  addCommon(doc);
+  addHaCommon(doc);
   doc["name"] = name;
   const String entityId = haObjectId(objectId);
   doc["object_id"] = entityId;
@@ -1410,7 +1580,7 @@ void publishButtonEntity(const char *objectId, const String &name,
   doc["payload_press"] = "PRESS";
   if (icon && icon[0]) doc["icon"] = icon;
 
-  publishConfig("button", objectId, doc);
+  publishHaConfig("button", objectId, doc);
 }
 
 void publishNumberEntity(const char *objectId, const String &name,
@@ -1418,7 +1588,7 @@ void publishNumberEntity(const char *objectId, const String &name,
                          const char *unit, int minValue, int maxValue,
                          int step, const char *icon) {
   JsonDocument doc;
-  addCommon(doc);
+  addHaCommon(doc);
   doc["name"] = name;
   const String entityId = haObjectId(objectId);
   doc["object_id"] = entityId;
@@ -1433,14 +1603,29 @@ void publishNumberEntity(const char *objectId, const String &name,
   if (unit && unit[0]) doc["unit_of_measurement"] = unit;
   if (icon && icon[0]) doc["icon"] = icon;
 
-  publishConfig("number", objectId, doc);
+  publishHaConfig("number", objectId, doc);
 }
 
 String entityName(const char *suffix) {
   return String(settings.haName) + " " + suffix;
 }
 
-void publishDiscovery() {
+void publishLinkDiscovery() {
+  publishSensor("link_age", entityName("link age"), "{{ value_json.age }}", "s",
+                "duration", "measurement", "mdi:timer-sand", 0,
+                settings.mqttTopicLink);
+  publishSensor("rssi", entityName("RSSI"), "{{ value_json.rssi }}", "dBm",
+                "signal_strength", "measurement", "mdi:signal", 0,
+                settings.mqttTopicLink);
+  publishSensor("snr", entityName("SNR"), "{{ value_json.snr }}", "dB", nullptr,
+                "measurement", "mdi:signal-variant", 1,
+                settings.mqttTopicLink);
+  publishSensor("last_seen", entityName("last seen"), "{{ value_json.last_seen }}",
+                nullptr, "timestamp", nullptr, "mdi:clock-outline", -1,
+                settings.mqttTopicLink);
+}
+
+void publishLegacyDiscovery() {
   publishStatusDiscovery();
 
   publishSensor("power", entityName("power"), "{{ value_json.power }}", "kW",
@@ -1473,18 +1658,6 @@ void publishDiscovery() {
                 "measurement", "mdi:timer-outline", 0);
   publishSensor("fault_code", entityName("fault code"), "{{ value_json.fault }}",
                 nullptr, nullptr, nullptr, "mdi:alert-circle-outline");
-  publishSensor("link_age", entityName("link age"), "{{ value_json.age }}", "s",
-                "duration", "measurement", "mdi:timer-sand", 0,
-                settings.mqttTopicLink);
-  publishSensor("rssi", entityName("RSSI"), "{{ value_json.rssi }}", "dBm",
-                "signal_strength", "measurement", "mdi:signal", 0,
-                settings.mqttTopicLink);
-  publishSensor("snr", entityName("SNR"), "{{ value_json.snr }}", "dB", nullptr,
-                "measurement", "mdi:signal-variant", 1,
-                settings.mqttTopicLink);
-  publishSensor("last_seen", entityName("last seen"), "{{ value_json.last_seen }}",
-                nullptr, "timestamp", nullptr, "mdi:clock-outline", -1,
-                settings.mqttTopicLink);
 
   publishBinarySensor("plugged", entityName("plugged"),
                       "{{ 'ON' if value_json.plugged else 'OFF' }}", "plug",
@@ -1525,6 +1698,108 @@ void publishDiscovery() {
   }
 }
 
+struct LegacyDiscoveryEntity {
+  const char *component;
+  const char *objectId;
+};
+
+const LegacyDiscoveryEntity LEGACY_DISCOVERY[] = {
+    {"sensor", "status"},
+    {"sensor", "power"},
+    {"sensor", "energy"},
+    {"sensor", "session_energy"},
+    {"sensor", "voltage_l1"},
+    {"sensor", "voltage_l2"},
+    {"sensor", "voltage_l3"},
+    {"sensor", "current_l1"},
+    {"sensor", "current_l2"},
+    {"sensor", "current_l3"},
+    {"sensor", "temperature"},
+    {"sensor", "charge_duration"},
+    {"sensor", "fault_code"},
+    {"binary_sensor", "plugged"},
+    {"binary_sensor", "charging"},
+    {"binary_sensor", "fault"},
+    {"binary_sensor", "rfid_active"},
+    {"binary_sensor", "schedule"},
+    {"switch", "charge_control"},
+    {"button", "charge_enable"},
+    {"button", "charge_disable"},
+    {"number", "current_limit"},
+    {"number", "charge_delay"},
+};
+
+void clearLegacyDiscovery() {
+  for (size_t i = 0; i < sizeof(LEGACY_DISCOVERY) / sizeof(LEGACY_DISCOVERY[0]);
+       ++i) {
+    clearHaConfig(LEGACY_DISCOVERY[i].component,
+                  LEGACY_DISCOVERY[i].objectId);
+  }
+}
+
+void publishDiscovery() {
+  const bool packMode = browserProfileSelected();
+  const ProfileDef *profile = activeProfile;
+  if (!packMode && !profile && strcmp(settings.profileId, "auto") != 0) {
+    profile = profileFind(settings.profileId);
+  }
+  const bool generic = !packMode && profile && profile->hasGenericEntities();
+
+  if (packMode) {
+    if (!legacyDiscoveryCleared) {
+      clearLegacyDiscovery();
+      legacyDiscoveryCleared = true;
+    }
+    if (!genericDiscoveryCleared) {
+      genericClearDiscovery();
+      genericClearState();
+      genericDiscoveryCleared = true;
+    }
+    browserProfileClearDiscovery();
+    browserProfilePublishDiscovery();
+    packDiscoveryCleared = false;
+  } else if (generic) {
+    if (!legacyDiscoveryCleared) {
+      clearLegacyDiscovery();
+      legacyDiscoveryCleared = true;
+    }
+    if (!packDiscoveryCleared) {
+      browserProfileClearDiscovery();
+      packDiscoveryCleared = true;
+    }
+    const bool profileChanged =
+        !discoveryInitialized || lastDiscoveryMode != 1 ||
+        strcmp(lastDiscoveryProfile, profile->id) != 0;
+    if (profileChanged) genericClearState();
+    genericPublishDiscovery(*profile);
+    genericDiscoveryCleared = false;
+    if (haveState && dpJsonLen > 0) {
+      genericPublishStateFromJson(*profile, dpJson);
+    }
+  } else {
+    if (!packDiscoveryCleared) {
+      browserProfileClearDiscovery();
+      packDiscoveryCleared = true;
+    }
+    if (!genericDiscoveryCleared) {
+      genericClearDiscovery();
+      genericClearState();
+      genericDiscoveryCleared = true;
+    }
+    publishLegacyDiscovery();
+    legacyDiscoveryCleared = false;
+  }
+
+  publishLinkDiscovery();
+
+  const char *activeId = packMode ? browserProfileId()
+                                  : (profile ? profile->id : "");
+  strncpy(lastDiscoveryProfile, activeId, sizeof(lastDiscoveryProfile) - 1);
+  lastDiscoveryProfile[sizeof(lastDiscoveryProfile) - 1] = '\0';
+  lastDiscoveryMode = packMode ? 2 : (generic ? 1 : 0);
+  discoveryInitialized = true;
+}
+
 void mqttCallback(char *topic, byte *payload, unsigned int length) {
   String t(topic);
   String p;
@@ -1535,6 +1810,33 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
 
   if (t == settings.mqttTopicCmdQuery) {
     nextDpQueryMs = millis();
+    return;
+  }
+  if (t == browserProfileCommandTopic()) {
+    if (!browserProfileSelected()) {
+      rejectCommand("pack", "no browser profile selected");
+      return;
+    }
+    if (!profileMatched) {
+      rejectCommand("pack", "browser profile does not match the last snapshot");
+      return;
+    }
+    if (p.length() == 0) {
+      rejectCommand("pack", "empty DP command");
+      return;
+    }
+    JsonDocument doc;
+    const DeserializationError err = deserializeJson(doc, p.c_str());
+    if (err || !doc.is<JsonObject>()) {
+      rejectCommand("pack", "payload must be a JSON dps object");
+      return;
+    }
+    String fragment = p;
+    if (doc["dps"].is<JsonObject>()) {
+      fragment = "";
+      serializeJson(doc["dps"], fragment);
+    }
+    sendDpSet(fragment, "pack");
     return;
   }
   if (t == settings.mqttTopicCmdStart) {
@@ -1565,6 +1867,23 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
     commandMode(p);
     return;
   }
+
+  const String genericPrefix = genericCommandTopic("");
+  if (t.startsWith(genericPrefix)) {
+    const String key = t.substring(genericPrefix.length());
+    if (!activeProfile || !profileMatched) {
+      rejectCommand("generic", "profile does not match the last snapshot");
+      return;
+    }
+    String fragment;
+    String error;
+    if (genericBuildCommand(*activeProfile, key, p, fragment, error)) {
+      sendDpSet(fragment, key.c_str());
+    } else {
+      rejectCommand(key.c_str(), error);
+    }
+    return;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1578,6 +1897,26 @@ void setup() {
 
   initDisplay();
   loadSettings();
+  profilesInit();
+  browserProfileInit();
+  profilesLoadCustomFromNvs();
+  profilesSetBuiltinControl("single-phase", settings.dpSingleChargeId,
+                            settings.dpSingleCurrentId,
+                            settings.dpSingleDelayId,
+                            settings.dpSingleModeId);
+  profilesSetBuiltinControl("3-phase", settings.dpThreeChargeId,
+                            settings.dpThreeCurrentId,
+                            settings.dpThreeDelayId,
+                            settings.dpThreeModeId);
+  profilesSetBuiltinControl("F-OBZ2", settings.dpObz2ChargeId,
+                            settings.dpObz2CurrentId, 0, 0);
+  if (strcmp(settings.profileId, "auto") != 0 &&
+      !profileFind(settings.profileId) && !browserProfileSelected()) {
+    Serial.printf("[profile] selected '%s' is not loaded; using auto\n",
+                  settings.profileId);
+    snprintf(settings.profileId, sizeof(settings.profileId), "auto");
+    saveSettings();
+  }
   maybeSdFirmwareUpdate(settings.sdFirmwareFile, drawSdUpdate);
   bootGuardOnBoot();
   drawSplash();
