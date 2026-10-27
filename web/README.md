@@ -125,6 +125,13 @@ Limits:
 | Discovery item line | 24 KB |
 | Active pack storage | 384 KB LittleFS partition |
 | Pack mode | one active browser pack |
+| MQTT buffer | 8192 bytes recommended for browser packs |
+
+Large discovery configs are published as one MQTT message. Set the base
+**MQTT buffer size** to at least 8192 bytes; a 2048-byte buffer silently
+rejects configs such as the Feyree Charge current entity, leaving HA on a
+stale/old entity. After changing the buffer, reboot the base and reload the HA
+MQTT integration if needed.
 
 The base sketch contains a custom `partitions.csv`:
 

@@ -214,10 +214,8 @@ function emitTransform(entity, dp, ctx, varName, rule, depth) {
     const target = dpNameToDp(entity, rule.value_redirect);
     if (target) {
       const value = stateValueForDp(entity, target, ctx, "dps", depth);
-      code += `{% if ${varName} is none %}\n`;
       code += value.code;
-      code += `{% set ${varName} = ${value.var} %}\n`;
-      code += `{% endif %}\n`;
+      code += `{% if ${value.var} is not none %}{% set ${varName} = ${value.var} %}{% endif %}\n`;
     }
   } else if (rule.value_mirror) {
     const target = dpNameToDp(entity, rule.value_mirror);
@@ -502,6 +500,45 @@ function emitRedirectWrite(entity, dp, ctx, targetVar, writesVar, rule, depth) {
 }
 
 function emitWrite(entity, dp, ctx, targetVar, writesVar, depth = 0) {
+  const rules = mappingRules(dp);
+  const defaults = rules.filter((r) => !Object.prototype.hasOwnProperty.call(r, "value") && !r.hidden && !isNullDpsRule(r));
+  const defaultRule = defaults.length ? defaults[defaults.length - 1] : null;
+  if (defaultRule && !Object.prototype.hasOwnProperty.call(defaultRule, "value") &&
+      !Object.prototype.hasOwnProperty.call(defaultRule, "dps_val") &&
+      Array.isArray(defaultRule.conditions)) {
+    const branches = [];
+    for (const cond of defaultRule.conditions) {
+      if (!cond || cond.hidden || !cond.value_redirect || !Object.prototype.hasOwnProperty.call(cond, "dps_val") ||
+          cond.dps_val === null || Array.isArray(cond.dps_val)) continue;
+      const target = dpNameToDp(entity, cond.value_redirect);
+      const constraintName = cond.constraint || defaultRule.constraint || dp.name;
+      const constraint = dpNameToDp(entity, constraintName);
+      if (!target || !constraint) continue;
+      const current = `dps.get(${lit(String(constraint.id))})`;
+      let match;
+      if (constraint.rawtype === "bitfield" && Number(cond.dps_val) !== 0) {
+        match = bitAllExpr(`(${current} | int)`, cond.dps_val);
+      } else {
+        match = `${current} | string == ${lit(String(cond.dps_val))}`;
+      }
+      branches.push({ match, target });
+    }
+    if (branches.length) {
+      let code = "";
+      branches.forEach((branch, index) => {
+        code += `{% ${index === 0 ? "if" : "elif"} ${branch.match} %}\n`;
+        code += emitWrite(entity, branch.target, ctx, targetVar, writesVar, depth + 1);
+      });
+      code += `{% else %}\n`;
+      code += emitWriteNormal(entity, dp, ctx, targetVar, writesVar, depth);
+      code += `{% endif %}\n`;
+      return code;
+    }
+  }
+  return emitWriteNormal(entity, dp, ctx, targetVar, writesVar, depth);
+}
+
+function emitWriteNormal(entity, dp, ctx, targetVar, writesVar, depth = 0) {
   const rules = mappingRules(dp);
   const withValue = rules.filter((r) => Object.prototype.hasOwnProperty.call(r, "value") && !r.hidden && !isNullDpsRule(r));
   const defaults = rules.filter((r) => !Object.prototype.hasOwnProperty.call(r, "value") && !r.hidden && !isNullDpsRule(r));

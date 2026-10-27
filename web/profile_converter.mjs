@@ -2236,6 +2236,24 @@ export function buildTelemetry(yaml) {
         kind,
       };
       if (dpIndex === 0 && ["number", "select"].includes(raw.entity)) {
+        const redirects = [];
+        for (const rule of mappingRules(dp)) {
+          for (const cond of asArray(rule.conditions)) {
+            if (!cond || cond.hidden || !cond.value_redirect ||
+                !Object.prototype.hasOwnProperty.call(cond, "dps_val") ||
+                cond.dps_val === null) continue;
+            const constraintName = cond.constraint || rule.constraint || dp.name;
+            const constraintDp = asArray(raw.dps).find((candidate) => candidate?.name === constraintName);
+            const targetDp = asArray(raw.dps).find((candidate) => candidate?.name === cond.value_redirect);
+            if (!constraintDp || !targetDp) continue;
+            redirects.push({
+              constraint: String(constraintDp.id),
+              value: String(cond.dps_val),
+              dp: String(targetDp.id),
+            });
+          }
+        }
+        if (redirects.length) field.redirects = redirects.slice(0, 4);
         const primaryType = asArray(raw.dps)[0]?.type;
         const fallbacks = asArray(raw.dps).slice(1)
           .filter((candidate) => candidate && candidate.type === primaryType &&

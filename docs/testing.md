@@ -84,6 +84,14 @@ to MQTT and Home Assistant.
   state/power/energy tiles.
 - [ ] Base OLED shows `Device: available/mismatch/unknown` and `Profile: <name>`,
   not `Charger`/`Power` rows.
+- [ ] With MQTT buffer 8192, the Feyree Charge current discovery (pack_e14)
+  appears in HA; with a 2048 buffer it is rejected and a stale entity can remain.
+- [ ] Setting Charge current to 32 A in HA publishes `{"115":32}` (or the
+  active variant DP), returns an `ok` command result, and updates raw DP 115/125.
+- [ ] The HA number and base Device telemetry both show 32 A after the command.
+- [ ] Problem is OFF while DP 10 is 0 and ON for a non-zero fault.
+- [ ] Stale pack discovery topics from previous packs are removed so HA does
+  not keep an old entity ID.
 - [ ] Home Assistant entity IDs are unchanged after adding profile fields.
 
 ### Control

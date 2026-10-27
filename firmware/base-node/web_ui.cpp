@@ -405,7 +405,16 @@ function parseDps(d) {
 
 function telemetryText(field, dps) {
   let key = field.dp;
-  if (dps[key] === undefined || dps[key] === null) {
+  let redirected = false;
+  for (const redirect of field.redirects || []) {
+    if (String(dps[redirect.constraint]) === String(redirect.value) &&
+        dps[redirect.dp] !== undefined && dps[redirect.dp] !== null) {
+      key = redirect.dp;
+      redirected = true;
+      break;
+    }
+  }
+  if (!redirected && (dps[key] === undefined || dps[key] === null)) {
     for (const fallback of field.fallbacks || []) {
       if (dps[fallback] !== undefined && dps[fallback] !== null) { key = fallback; break; }
     }

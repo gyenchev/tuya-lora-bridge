@@ -129,7 +129,7 @@ the nodes on trusted networks.
 | Tab | Settings |
 |---|---|
 | WiFi | Home WiFi SSID/password and network scan |
-| MQTT | Broker host, port, username, password, keepalive, socket timeout and buffer size |
+| MQTT | Broker host, port, username, password, keepalive, socket timeout and buffer size. Use at least 8192 bytes for browser packs; larger discovery configs are single MQTT messages. |
 | Topics | State, link, availability, result, debug, raw DP and command topics |
 | LoRa | PSK (32 hex characters), frequency, sync word, TX power, spreading factor, bandwidth, coding rate and preamble |
 | Home Assistant | Device name, timezone, discovery prefix and stable device identifier |
