@@ -64,7 +64,7 @@ Example `link`:
   "seq": 42,
   "boot_id": 123456789,
   "last_seen": "2026-10-22T11:32:05Z",
-  "fw": "0.4.0"
+  "fw": "0.3.0"
 }
 ```
 
@@ -249,11 +249,11 @@ Common device block:
     "name": "Tuya charger",
     "manufacturer": "",
     "model": "Tuya device via Tuya LoRa Bridge",
-    "sw_version": "0.4.0"
+    "sw_version": "0.3.0"
   },
   "origin": {
     "name": "tuya-lora-bridge",
-    "sw_version": "0.4.0"
+    "sw_version": "0.3.0"
   }
 }
 ```

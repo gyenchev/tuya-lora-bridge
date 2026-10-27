@@ -16,7 +16,7 @@ descriptor without changing the firmware. Built-in Feyree and F-OBZ2 profiles
 are provided as compatibility examples and can be replaced by custom
 descriptors.
 
-- **Firmware version:** 0.4.0
+- **Firmware version:** 0.3.0
 - **Radio band:** 868 MHz (EU)
 - **LoRa link:** AES-128-GCM authenticated and encrypted
 - **Home Assistant:** MQTT discovery, no custom integration

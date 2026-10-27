@@ -265,7 +265,7 @@ The base publishes `tuya-lora/charger/link` on every valid LoRa frame and every
   "seq": 42,
   "boot_id": 123456789,
   "last_seen": "2026-10-22T11:32:05Z",
-  "fw": "0.4.0"
+  "fw": "0.3.0"
 }
 ```
 

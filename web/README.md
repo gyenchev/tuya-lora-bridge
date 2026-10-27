@@ -37,8 +37,8 @@ name contains `/`, use the `refs/heads/` form, for example:
 https://raw.githubusercontent.com/gyenchev/tuya-lora-bridge/refs/heads/feature/dp-profiles/web/catalog.json
 ```
 
-After merging to `main`, the `refs/heads/main` form can be used, or the branch
-can be pinned to a commit for reproducibility.
+The builder default now uses `refs/heads/main`; the catalog can also be pinned
+to a commit for reproducibility.
 
 The converter loads `js-yaml` from jsDelivr for online conversion. Offline
 charger packs are already converted and do not need js-yaml.
