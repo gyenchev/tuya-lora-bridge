@@ -46,6 +46,7 @@ Example `state`:
   "profile_selected": "auto",
   "profile_detected": "3-phase",
   "profile_match": true,
+  "profile_entities": 0,
   "delay_hours": 0
 }
 ```

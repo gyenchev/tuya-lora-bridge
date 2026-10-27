@@ -1412,6 +1412,7 @@ void publishState() {
   doc["profile_selected"] = settings.profileId;
   doc["profile_detected"] = profileDetectedId();
   doc["profile_match"] = profileMatched;
+  doc["profile_entities"] = profileEntityCount();
   if (profileError[0]) doc["profile_error"] = profileError;
   doc["delay_hours"] = lastDelayHours;
 
