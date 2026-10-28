@@ -189,3 +189,9 @@ Platform builders live in `profile_converter.mjs`; the shared Jinja mapping
 engine is in `profile_mapping.mjs`. If a native builder cannot represent a
 descriptor, it falls back to generic DP sensors rather than rejecting the
 profile. The raw-DP sensor remains the complete view of every DP.
+
+## License
+
+The converter, mapping engine and generated catalog include material derived from
+tuya-local under the MIT License. See [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
+The rest of the project is Unlicense.

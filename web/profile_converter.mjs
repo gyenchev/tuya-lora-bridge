@@ -1,3 +1,4 @@
+// Portions derived from tuya-local (MIT). See THIRD_PARTY_NOTICES.md.
 // Shared tuya-local -> Tuya LoRa browser profile converter.
 // Used by the browser builder and by the Node catalog generator.
 //

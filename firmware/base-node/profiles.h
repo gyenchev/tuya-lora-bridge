@@ -1,3 +1,5 @@
+// Generic tuya-local-style descriptors (MIT-derived data/logic).
+// See THIRD_PARTY_NOTICES.md.
 #pragma once
 
 #include <Arduino.h>

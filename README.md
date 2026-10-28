@@ -399,6 +399,12 @@ This project is released into the public domain under the **Unlicense**. You may
 copy, modify, publish, use, compile, sell, or distribute it for any purpose,
 commercial or non-commercial, without attribution. See [`LICENSE`](LICENSE).
 
+Portions derived from **tuya-local** — including the profile mapping/conversion
+logic and the generated device catalog/profile assets — are licensed under the
+MIT License and retain their upstream copyright. See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The Unlicense applies to the
+original code in this repository, not to those third-party-derived portions.
+
 This project is **100% vibecoded / AI-generated** and is not a certified
 controller or safety device for any application. It can control EV chargers and
 other Tuya devices, but the supported profile set can change at any time. The
