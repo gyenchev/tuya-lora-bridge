@@ -640,7 +640,7 @@ const char LORA_HTML[] PROGMEM = R"HTML(<!doctype html>
     <tr><th>Message mix</th><td id="lora-types">--</td></tr>
     <tr><th>Errors</th><td id="lora-errors">--</td></tr>
   </table>
-  <p class="muted">Duty cycle uses a fixed 60-minute window and a 1% reference for EU 868.0–868.6 MHz. Base TX is the base's own airtime; remote TX is inferred from received frames.</p>
+  <p class="muted">The 60-minute row shows airtime against the fixed one-hour window and the selected EU sub-band limit. Observed duty is airtime divided by uptime. Base TX is the base's own airtime; remote TX is inferred from received frames.</p>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -725,15 +725,20 @@ function renderLora(s) {
   const duty = s.duty || {};
   if (duty.window_s) {
     const limit = duty.limit_percent;
+    const limitText = duty.limit_known === false
+      ? 'limit unknown (verify local rules)'
+      : 'limit ' + fmt(limit, 1, '%') + ' each';
     set('lora-duty',
-        'base TX ' + fmt(duty.tx_percent, 3, '%') +
+        '60-min: base TX ' + fmt(duty.tx_percent, 3, '%') +
         (duty.tx_percent <= limit ? ' OK' : ' OVER') +
         ' · remote TX ' + fmt(duty.rx_percent, 3, '%') +
         (duty.rx_percent <= limit ? ' OK' : ' OVER') +
         ' · combined ' + fmt(duty.total_percent, 3, '%') +
-        ' · limit ' + fmt(limit, 1, '%') + ' each · 60 min window · ' +
-        fmtWindow(duty.observed_s) + ' observed · base budget left ' +
-        fmtDuration(duty.tx_remaining_ms));
+        ' · ' + limitText + ' · used ' +
+        fmtDuration(duty.total_airtime_ms) + ' of ' +
+        fmtDuration(duty.budget_ms) + ' · observed ' +
+        fmt(duty.observed_percent, 2, '%') + ' over ' +
+        fmtWindow(duty.observed_s));
   } else {
     set('lora-duty', '--');
   }
