@@ -299,23 +299,16 @@ const char STATUS_HTML[] PROGMEM = R"HTML(<!doctype html>
   <p class="muted">Firmware {{FW_VERSION}} · <span id="updated">loading...</span></p>
 
   <div class="status">
+    <div><strong>Profile:</strong> <span id="profile">--</span></div>
+    <div><strong>Type:</strong> <span id="t-profile-type">--</span></div>
+    <div><strong>Entities:</strong> <span id="t-profile-entities">--</span></div>
+    <div><strong>Note:</strong> <span id="t-profile-note">--</span></div>
+  </div>
+
+  <div class="status">
     <div><strong>Base:</strong> <span id="base-link">--</span></div>
     <div><strong>MQTT:</strong> <span id="mqtt-link">--</span></div>
   </div>
-
-  <div class="cards">
-    <div class="card"><span class="label">Remote link</span><strong id="online">--</strong></div>
-    <div class="card"><span class="label">Profile</span><strong id="profile">--</strong></div>
-    <div class="card"><span class="label">Last seen</span><strong id="age">--</strong></div>
-    <div class="card"><span class="label">LoRa</span><strong id="lora">--</strong></div>
-  </div>
-
-  <h2>Profile</h2>
-  <table class="telemetry">
-    <tr><th>Active profile</th><td id="t-profile">--</td></tr>
-    <tr><th>Profile entities</th><td id="t-profile-entities">--</td></tr>
-    <tr><th>Profile note</th><td id="t-profile-note">--</td></tr>
-  </table>
 
   <h2>Device telemetry</h2>
   <p class="muted" id="telemetry-note">Values from the active profile; raw DPs when the profile has no telemetry fields.</p>
@@ -327,16 +320,6 @@ const char STATUS_HTML[] PROGMEM = R"HTML(<!doctype html>
 <script>
 const $ = id => document.getElementById(id);
 function set(id, text) { const el = $(id); if (el) el.textContent = text; }
-function fmt(value, digits, suffix) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return '--';
-  return Number(value).toFixed(digits) + (suffix || '');
-}
-function ago(seconds) {
-  if (seconds === null || seconds === undefined || seconds < 0) return '--';
-  if (seconds < 60) return Math.floor(seconds) + 's ago';
-  if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
-  return Math.floor(seconds / 3600) + 'h ago';
-}
 let telemetryFields = [];
 let telemetryProfile = null;
 let telemetryBusy = false;
@@ -447,11 +430,8 @@ async function refresh() {
     set('updated', 'updated ' + new Date().toLocaleTimeString());
     set('base-link', d.wifi_connected ? 'connected to ' + d.base_ip + ' (' + d.wifi_rssi + ' dBm)' : 'WiFi not connected');
     set('mqtt-link', d.mqtt_connected ? 'connected' : 'not connected');
-    set('online', d.online ? 'online' : (d.have_seen ? 'offline' : 'waiting'));
-    set('profile', d.profile || 'unknown');
-    set('age', d.have_seen ? ago(d.age_s) : 'never');
-    set('lora', d.have_seen ? d.rssi + ' dBm / ' + fmt(d.snr, 1) + ' dB' : '--');
-    set('t-profile', d.profile || 'none');
+    set('profile', d.profile || 'none');
+    set('t-profile-type', d.profile_device_type || '--');
     set('t-profile-entities', d.profile_entities || 0);
     set('t-profile-note', d.profile_error || 'none');
     set('dp-json', d.dp_json || '(none)');

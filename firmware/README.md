@@ -116,13 +116,14 @@ home WiFi cannot be reached within the fallback delay (20 seconds by default).
 
 ## Configuration web UI
 
-Each node serves:
+Each node serves a read-only **Status** page at `/` and a tabbed **Settings**
+page at `/settings`. The base also serves a **LoRa** page at `/lora` with
+base-local transfer telemetry (frames, wire/payload bytes, burst and per-frame
+speeds, last frames, 60-minute duty cycle and DP snapshot speed) that is not
+published to MQTT or Home Assistant.
 
-- a read-only **Status** page at `/`, refreshed from `/api/status`;
-- a **LoRa** page at `/lora` with base-local transfer telemetry (frames,
-  wire/payload bytes, burst and per-frame speeds, last frames, 60-minute duty
-  cycle and DP snapshot speed) that is not published to MQTT or Home Assistant;
-- a tabbed **Settings** page at `/settings` with a **Save and reboot** button.
+The base top-level tab order is **Status, LoRa, Settings**. Factory reset is in
+**Settings > System** and is only visible on that tab.
 
 All runtime settings are stored in NVS. The web UI is unauthenticated, so keep
 the nodes on trusted networks.
@@ -138,7 +139,7 @@ the nodes on trusted networks.
 | Timing | Offline timeout, snapshot/chunk timeouts, retry intervals, WiFi/MQTT reconnect intervals and display timings |
 | Control | Command enable. Command DPs and value ranges come from the active profile. |
 | Profile | The single active profile, its type/entity count and a link to `/profiles`. The profile editor loads a device from the online catalog, shows the generated profile JSON in an editable textarea, and saves it to the base. |
-| System | Setup AP credentials, web UI port, SD firmware filename and SD update countdown |
+| System | Setup AP credentials, web UI port, SD firmware filename, SD update countdown and factory reset |
 
 ### Remote node settings
 
@@ -229,10 +230,10 @@ mapping lives on the base node and can be changed without reflashing the remote.
 10. Marks the remote link offline after 10 minutes without a valid frame.
 11. Turns the OLED panel off 10 minutes after boot to reduce burn-in.
 
-The base **Status** page shows link/profile tiles and a profile-driven **Device
-telemetry** table; packs without telemetry metadata fall back to raw DPs. The
-**LoRa** page shows per-frame/burst speeds, byte counts, DP snapshot speed,
-message mix and the rolling 60-minute duty cycle. The OLED shows device
+The base **Status** page shows a profile tile, link status and a profile-driven
+**Device telemetry** table; packs without telemetry metadata fall back to raw
+DPs. The **LoRa** page shows per-frame/burst speeds, byte counts, DP snapshot
+speed, message mix and the rolling 60-minute duty cycle. The OLED shows device
 readiness (`available`/`unknown`) and the active profile name instead of
 charger-only status/power rows.
 
