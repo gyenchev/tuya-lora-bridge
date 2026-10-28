@@ -91,7 +91,7 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
 </head>
 <body data-active-tab="{{ACTIVE_TAB}}">
 <main>
-  <nav class="nav"><a class="active" href="/settings">Settings</a><a href="/">Status</a></nav>
+  <nav class="nav"><a href="/">Status</a><a href="/lora">LoRa</a><a class="active" href="/settings">Settings</a></nav>
   <h1>Tuya LoRa Bridge — Base</h1>
   <p class="muted">Firmware {{FW_VERSION}} · {{IP}}</p>
 
@@ -204,6 +204,9 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
       <p class="hint">WiFi channel for the setup AP. 1, 6, and 11 avoid overlap.</p>
       <h2>Web UI and SD update</h2>
       {{FIELDS_SYSTEM}}
+      <h2>Factory reset</h2>
+      <p class="hint">Erases WiFi, MQTT, LoRa keys, device profile and settings, then reboots into setup mode.</p>
+      <button class="danger" type="submit" formaction="/factory" formmethod="post" formnovalidate onclick="return confirm('Clear all configuration and reboot into setup mode?')">Factory reset</button>
     </section>
 
     <div class="actions">
@@ -211,10 +214,6 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
     </div>
   </form>
 
-  <hr>
-  <form method="POST" action="/factory" onsubmit="return confirm('Clear all configuration and reboot into setup mode?')">
-    <button class="danger" type="submit">Factory reset</button>
-  </form>
 </main>
 <script>
 const form = document.getElementById('settings-form');
@@ -295,7 +294,7 @@ const char STATUS_HTML[] PROGMEM = R"HTML(<!doctype html>
 </head>
 <body>
 <main>
-  <nav class="nav"><a href="/settings">Settings</a><a class="active" href="/">Status</a></nav>
+  <nav class="nav"><a class="active" href="/">Status</a><a href="/lora">LoRa</a><a href="/settings">Settings</a></nav>
   <h1>Tuya LoRa Bridge — Base status</h1>
   <p class="muted">Firmware {{FW_VERSION}} · <span id="updated">loading...</span></p>
 
@@ -311,7 +310,210 @@ const char STATUS_HTML[] PROGMEM = R"HTML(<!doctype html>
     <div class="card"><span class="label">LoRa</span><strong id="lora">--</strong></div>
   </div>
 
-  <h2>LoRa link telemetry</h2>
+  <h2>Profile</h2>
+  <table class="telemetry">
+    <tr><th>Active profile</th><td id="t-profile">--</td></tr>
+    <tr><th>Profile entities</th><td id="t-profile-entities">--</td></tr>
+    <tr><th>Profile note</th><td id="t-profile-note">--</td></tr>
+  </table>
+
+  <h2>Device telemetry</h2>
+  <p class="muted" id="telemetry-note">Values from the active profile; raw DPs when the profile has no telemetry fields.</p>
+  <table class="telemetry" id="telemetry-table"></table>
+
+  <h2>Raw DP JSON</h2>
+  <details><summary>Show raw JSON</summary><pre id="dp-json">--</pre></details>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+function set(id, text) { const el = $(id); if (el) el.textContent = text; }
+function fmt(value, digits, suffix) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '--';
+  return Number(value).toFixed(digits) + (suffix || '');
+}
+function ago(seconds) {
+  if (seconds === null || seconds === undefined || seconds < 0) return '--';
+  if (seconds < 60) return Math.floor(seconds) + 's ago';
+  if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+  return Math.floor(seconds / 3600) + 'h ago';
+}
+let telemetryFields = [];
+let telemetryProfile = null;
+let telemetryBusy = false;
+
+function parseDps(d) {
+  try {
+    const raw = JSON.parse(d.dp_json || '{}');
+    return raw && raw.dps ? raw.dps : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function telemetryText(field, dps) {
+  let key = field.dp;
+  let redirected = false;
+  for (const redirect of field.redirects || []) {
+    if (String(dps[redirect.constraint]) === String(redirect.value) &&
+        dps[redirect.dp] !== undefined && dps[redirect.dp] !== null) {
+      key = redirect.dp;
+      redirected = true;
+      break;
+    }
+  }
+  if (!redirected && (dps[key] === undefined || dps[key] === null)) {
+    for (const fallback of field.fallbacks || []) {
+      if (dps[fallback] !== undefined && dps[fallback] !== null) { key = fallback; break; }
+    }
+  }
+  const raw = dps[key];
+  if (raw === undefined || raw === null) return '--';
+  if (field.kind === 'bool') {
+    let value;
+    if (Array.isArray(field.values) && field.values.length) {
+      value = field.values.map(String).includes(String(raw));
+    } else {
+      value = Boolean(raw);
+    }
+    return value ? 'Yes' : 'No';
+  }
+  if (field.kind === 'enum') {
+    const key = String(raw);
+    if (field.map && Object.prototype.hasOwnProperty.call(field.map, key)) {
+      return String(field.map[key]);
+    }
+    return String(raw);
+  }
+  if (field.kind === 'number') {
+    const number = Number(raw);
+    if (!Number.isFinite(number)) return String(raw);
+    const scale = Number(field.scale || 1);
+    const value = scale !== 1 ? number / scale : number;
+    const precision = Number.isInteger(field.precision) ? field.precision : (scale > 1 ? 1 : 0);
+    return value.toFixed(precision) + (field.unit ? ' ' + field.unit : '');
+  }
+  if (typeof raw === 'object') return JSON.stringify(raw);
+  return String(raw);
+}
+
+async function loadTelemetry() {
+  try {
+    const response = await fetch('/api/profile/telemetry', {cache: 'no-store'});
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function renderTelemetry(d) {
+  const table = $('telemetry-table');
+  if (!table) return;
+  table.replaceChildren();
+  const dps = parseDps(d);
+  let fields = telemetryFields;
+  if (!fields.length) {
+    fields = Object.keys(dps)
+      .sort((a, b) => Number(a) - Number(b))
+      .map((id) => ({ key: 'dp_' + id, label: 'DP ' + id, dp: id, kind: 'text' }));
+  }
+  if (!fields.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 2;
+    cell.textContent = d.have_state ? 'No telemetry definitions for this pack.' : 'Waiting for DP snapshot.';
+    row.appendChild(cell);
+    table.appendChild(row);
+    return;
+  }
+  for (const field of fields) {
+    const row = document.createElement('tr');
+    const label = document.createElement('th');
+    label.textContent = field.label || ('DP ' + field.dp);
+    const value = document.createElement('td');
+    value.textContent = telemetryText(field, dps);
+    row.appendChild(label);
+    row.appendChild(value);
+    table.appendChild(row);
+  }
+}
+
+async function refresh() {
+  try {
+    const response = await fetch('/api/status', {cache: 'no-store'});
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const d = await response.json();
+    set('updated', 'updated ' + new Date().toLocaleTimeString());
+    set('base-link', d.wifi_connected ? 'connected to ' + d.base_ip + ' (' + d.wifi_rssi + ' dBm)' : 'WiFi not connected');
+    set('mqtt-link', d.mqtt_connected ? 'connected' : 'not connected');
+    set('online', d.online ? 'online' : (d.have_seen ? 'offline' : 'waiting'));
+    set('profile', d.profile || 'unknown');
+    set('age', d.have_seen ? ago(d.age_s) : 'never');
+    set('lora', d.have_seen ? d.rssi + ' dBm / ' + fmt(d.snr, 1) + ' dB' : '--');
+    set('t-profile', d.profile || 'none');
+    set('t-profile-entities', d.profile_entities || 0);
+    set('t-profile-note', d.profile_error || 'none');
+    set('dp-json', d.dp_json || '(none)');
+    const profileKey = d.profile || 'none';
+    if (telemetryProfile !== profileKey && !telemetryBusy) {
+      telemetryBusy = true;
+      try {
+        telemetryFields = await loadTelemetry();
+        telemetryProfile = profileKey;
+      } finally {
+        telemetryBusy = false;
+      }
+    }
+    renderTelemetry(d);
+  } catch (error) {
+    set('updated', 'connection lost');
+  }
+}
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>)HTML";
+
+const char LORA_HTML[] PROGMEM = R"HTML(<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tuya LoRa Bridge — LoRa telemetry</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px; font: 16px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; }
+  main { max-width: 680px; margin: 0 auto; }
+  h1 { font-size: 1.45rem; margin: 0 0 4px; }
+  h2 { font-size: 1.05rem; margin: 24px 0 8px; }
+  .muted { opacity: .7; font-size: .9rem; }
+  .nav { display: flex; gap: 8px; margin-bottom: 18px; }
+  .nav a { padding: 8px 12px; border-radius: 8px; text-decoration: none; color: inherit; background: #8882; font-weight: 600; }
+  .nav a.active { background: #2563eb; color: #fff; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 16px 0; }
+  .card { border: 1px solid #8884; border-radius: 10px; padding: 12px; }
+  .card .label { display: block; font-size: .8rem; opacity: .7; }
+  .card strong { font-size: 1.15rem; }
+  .telemetry { width: 100%; border-collapse: collapse; }
+  .telemetry th, .telemetry td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #8883; }
+  .telemetry th { width: 35%; font-weight: 500; opacity: .8; }
+</style>
+</head>
+<body>
+<main>
+  <nav class="nav"><a href="/">Status</a><a class="active" href="/lora">LoRa</a><a href="/settings">Settings</a></nav>
+  <h1>LoRa link telemetry</h1>
+  <p class="muted">Firmware {{FW_VERSION}} · <span id="updated">loading...</span></p>
+
+  <div class="cards">
+    <div class="card"><span class="label">Remote link</span><strong id="online">--</strong></div>
+    <div class="card"><span class="label">Last seen</span><strong id="age">--</strong></div>
+    <div class="card"><span class="label">RSSI / SNR</span><strong id="lora">--</strong></div>
+  </div>
+
   <p class="muted">Measured locally on the base; this is not published to MQTT or Home Assistant.</p>
   <table class="telemetry">
     <tr><th>Radio</th><td id="lora-phy">--</td></tr>
@@ -330,20 +532,6 @@ const char STATUS_HTML[] PROGMEM = R"HTML(<!doctype html>
     <tr><th>Errors</th><td id="lora-errors">--</td></tr>
   </table>
   <p class="muted">Duty cycle uses a fixed 60-minute window and a 1% reference for EU 868.0–868.6 MHz. Base TX is the base's own airtime; remote TX is inferred from received frames.</p>
-
-  <h2>Profile</h2>
-  <table class="telemetry">
-    <tr><th>Active profile</th><td id="t-profile">--</td></tr>
-    <tr><th>Profile entities</th><td id="t-profile-entities">--</td></tr>
-    <tr><th>Profile note</th><td id="t-profile-note">--</td></tr>
-  </table>
-
-  <h2>Device telemetry</h2>
-  <p class="muted" id="telemetry-note">Values from the active profile; raw DPs when the profile has no telemetry fields.</p>
-  <table class="telemetry" id="telemetry-table"></table>
-
-  <h2>Raw DP JSON</h2>
-  <details><summary>Show raw JSON</summary><pre id="dp-json">--</pre></details>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -487,107 +675,6 @@ function renderLora(s) {
   set('lora-errors', (e.rx_decode || 0) + ' decode / ' + (e.rx_replay || 0) +
       ' replay / ' + (e.tx || 0) + ' TX');
 }
-let telemetryFields = [];
-let telemetryProfile = null;
-let telemetryBusy = false;
-
-function parseDps(d) {
-  try {
-    const raw = JSON.parse(d.dp_json || '{}');
-    return raw && raw.dps ? raw.dps : {};
-  } catch (error) {
-    return {};
-  }
-}
-
-function telemetryText(field, dps) {
-  let key = field.dp;
-  let redirected = false;
-  for (const redirect of field.redirects || []) {
-    if (String(dps[redirect.constraint]) === String(redirect.value) &&
-        dps[redirect.dp] !== undefined && dps[redirect.dp] !== null) {
-      key = redirect.dp;
-      redirected = true;
-      break;
-    }
-  }
-  if (!redirected && (dps[key] === undefined || dps[key] === null)) {
-    for (const fallback of field.fallbacks || []) {
-      if (dps[fallback] !== undefined && dps[fallback] !== null) { key = fallback; break; }
-    }
-  }
-  const raw = dps[key];
-  if (raw === undefined || raw === null) return '--';
-  if (field.kind === 'bool') {
-    let value;
-    if (Array.isArray(field.values) && field.values.length) {
-      value = field.values.map(String).includes(String(raw));
-    } else {
-      value = Boolean(raw);
-    }
-    return value ? 'Yes' : 'No';
-  }
-  if (field.kind === 'enum') {
-    const key = String(raw);
-    if (field.map && Object.prototype.hasOwnProperty.call(field.map, key)) {
-      return String(field.map[key]);
-    }
-    return String(raw);
-  }
-  if (field.kind === 'number') {
-    const number = Number(raw);
-    if (!Number.isFinite(number)) return String(raw);
-    const scale = Number(field.scale || 1);
-    const value = scale !== 1 ? number / scale : number;
-    const precision = Number.isInteger(field.precision) ? field.precision : (scale > 1 ? 1 : 0);
-    return value.toFixed(precision) + (field.unit ? ' ' + field.unit : '');
-  }
-  if (typeof raw === 'object') return JSON.stringify(raw);
-  return String(raw);
-}
-
-async function loadTelemetry() {
-  try {
-    const response = await fetch('/api/profile/telemetry', {cache: 'no-store'});
-    if (!response.ok) throw new Error('HTTP ' + response.status);
-    const data = await response.json();
-    return Array.isArray(data) ? data : [];
-  } catch (error) {
-    return [];
-  }
-}
-
-function renderTelemetry(d) {
-  const table = $('telemetry-table');
-  if (!table) return;
-  table.replaceChildren();
-  const dps = parseDps(d);
-  let fields = telemetryFields;
-  if (!fields.length) {
-    fields = Object.keys(dps)
-      .sort((a, b) => Number(a) - Number(b))
-      .map((id) => ({ key: 'dp_' + id, label: 'DP ' + id, dp: id, kind: 'text' }));
-  }
-  if (!fields.length) {
-    const row = document.createElement('tr');
-    const cell = document.createElement('td');
-    cell.colSpan = 2;
-    cell.textContent = d.have_state ? 'No telemetry definitions for this pack.' : 'Waiting for DP snapshot.';
-    row.appendChild(cell);
-    table.appendChild(row);
-    return;
-  }
-  for (const field of fields) {
-    const row = document.createElement('tr');
-    const label = document.createElement('th');
-    label.textContent = field.label || ('DP ' + field.dp);
-    const value = document.createElement('td');
-    value.textContent = telemetryText(field, dps);
-    row.appendChild(label);
-    row.appendChild(value);
-    table.appendChild(row);
-  }
-}
 
 async function refresh() {
   try {
@@ -595,28 +682,10 @@ async function refresh() {
     if (!response.ok) throw new Error('HTTP ' + response.status);
     const d = await response.json();
     set('updated', 'updated ' + new Date().toLocaleTimeString());
-    set('base-link', d.wifi_connected ? 'connected to ' + d.base_ip + ' (' + d.wifi_rssi + ' dBm)' : 'WiFi not connected');
-    set('mqtt-link', d.mqtt_connected ? 'connected' : 'not connected');
     set('online', d.online ? 'online' : (d.have_seen ? 'offline' : 'waiting'));
-    set('profile', d.profile || 'unknown');
     set('age', d.have_seen ? ago(d.age_s) : 'never');
     set('lora', d.have_seen ? d.rssi + ' dBm / ' + fmt(d.snr, 1) + ' dB' : '--');
     renderLora(d.lora_stats);
-    set('t-profile', d.profile || 'none');
-    set('t-profile-entities', d.profile_entities || 0);
-    set('t-profile-note', d.profile_error || 'none');
-    set('dp-json', d.dp_json || '(none)');
-    const profileKey = d.profile || 'none';
-    if (telemetryProfile !== profileKey && !telemetryBusy) {
-      telemetryBusy = true;
-      try {
-        telemetryFields = await loadTelemetry();
-        telemetryProfile = profileKey;
-      } finally {
-        telemetryBusy = false;
-      }
-    }
-    renderTelemetry(d);
   } catch (error) {
     set('updated', 'connection lost');
   }
@@ -642,7 +711,7 @@ const char RESULT_HTML[] PROGMEM = R"HTML(<!doctype html>
   a { color: inherit; }
 </style>
 </head>
-<body><main><h1>{{TITLE}}</h1><p>{{DETAIL}}</p><p><a href="/settings">Settings</a> · <a href="/">Status</a></p></main></body>
+<body><main><h1>{{TITLE}}</h1><p>{{DETAIL}}</p><p><a href="/">Status</a> · <a href="/lora">LoRa</a> · <a href="/settings">Settings</a></p></main></body>
 </html>)HTML";
 
 String htmlEscape(const char *text) {
@@ -1250,6 +1319,13 @@ void handleStatus() {
   server->send(200, "text/html", page);
 }
 
+void handleLora() {
+  String page = FPSTR(LORA_HTML);
+  page.replace("{{FW_VERSION}}", FW_VERSION);
+  server->sendHeader("Cache-Control", "no-store");
+  server->send(200, "text/html", page);
+}
+
 void handleApiStatus() {
   String json;
   json.reserve(4096);
@@ -1698,6 +1774,7 @@ void webUiBegin() {
 
   server = new WebServer(settings.webUiPort);
   server->on("/", HTTP_GET, handleStatus);
+  server->on("/lora", HTTP_GET, handleLora);
   server->on("/settings", HTTP_GET, handleSettings);
   server->on("/profiles", HTTP_GET, handleProfileBuilder);
   server->on("/profile_converter.mjs", HTTP_GET, handleProfileConverter);

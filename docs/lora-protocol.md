@@ -276,8 +276,9 @@ snapshot is received.
 ## Local transfer telemetry
 
 The base also keeps local link counters for the web UI. They are exposed only in
-`/api/status` under `lora_stats` and on the status page; they are **not**
-published to MQTT or Home Assistant, and they require no remote-node update.
+`/api/status` under `lora_stats` and on the **LoRa** tab at `/lora`; they are
+**not** published to MQTT or Home Assistant, and they require no remote-node
+update.
 
 The counters include:
 

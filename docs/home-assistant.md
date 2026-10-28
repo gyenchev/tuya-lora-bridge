@@ -209,8 +209,8 @@ LoRa link is alive even when the Tuya device is unreachable.
 
 Additional transfer telemetry — frame/byte counts, burst and per-frame speeds,
 60-minute duty cycle and DP snapshot speed — is available only on the base
-status page and in `/api/status`. It is deliberately not published to MQTT or
-Home Assistant.
+**LoRa** tab at `/lora` and in `/api/status`. It is deliberately not published
+to MQTT or Home Assistant.
 
 ### Control
 

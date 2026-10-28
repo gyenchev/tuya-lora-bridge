@@ -113,7 +113,7 @@ The firmware and Home Assistant configuration must preserve these rules:
 
 - **868 MHz EU:** the 868.0–868.6 MHz band has a 1% duty-cycle limit. Keep the
   snapshot interval at 60 seconds or slower and verify the airtime budget in
-  [`lora-protocol.md`](lora-protocol.md). The base status page shows the rolling
+  [`lora-protocol.md`](lora-protocol.md). The base **LoRa** tab shows the rolling
   60-minute TX duty for the base, the observed remote TX duty and the remaining
   budget against the 1% reference; use it when changing the snapshot interval,
   spreading factor or retry settings.

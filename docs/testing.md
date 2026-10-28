@@ -26,7 +26,7 @@ connected to MQTT and Home Assistant.
 - [ ] The measured frame rate stays within the EU duty-cycle budget.
 - [ ] `/api/status` contains `lora_stats` with PHY, totals, RX/TX bursts,
   last-frame speeds, the 60-minute duty window, DP-snapshot and error counters;
-  the status page renders them.
+  the **LoRa** tab renders them.
 - [ ] After a snapshot, the last-frame speed, burst speed, wire bytes and DP
   snapshot speed change; the duty percentages stay against the fixed 3600 s
   window and do not decay while idle.
