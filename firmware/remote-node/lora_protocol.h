@@ -30,6 +30,13 @@ enum MsgType : uint8_t {
   MSG_DP_CHUNK = 0x05,  // device -> base: one chunk of the snapshot
   MSG_DP_ACK   = 0x06,  // base -> device: bitmap of received chunks
   MSG_DP_SET   = 0x07,  // base -> device: raw dps JSON fragment for CONTROL
+  MSG_CONFIG_SET        = 0x08,  // base -> remote: staged LoRa config
+  MSG_CONFIG_ACK        = 0x09,  // remote -> base: config accepted/rejected
+  MSG_CONFIG_READY      = 0x0A,  // remote -> base: new config is live
+  MSG_CONFIG_COMMIT     = 0x0B,  // base -> remote: commit new config
+  MSG_CONFIG_COMMIT_ACK = 0x0C,  // remote -> base: committed
+  MSG_CONFIG_PROBE      = 0x0D,  // base -> remote: connectivity probe
+  MSG_CONFIG_PROBE_ACK  = 0x0E,  // remote -> base: probe reply
 };
 
 enum Direction : uint8_t {
@@ -111,6 +118,23 @@ struct AckData {
   uint16_t detail   = 0;
 };
 
+// Complete LoRa link configuration. The PSK is a 32-character hex string.
+struct LoraConfig {
+  float    frequencyMhz = 868.1f;
+  uint8_t  syncWord     = 0xA6;
+  int8_t   txPower      = 14;
+  uint8_t  sf           = 7;
+  uint32_t bandwidthHz  = 125000;
+  uint8_t  codingRate   = 5;
+  uint16_t preamble     = 8;
+  char     psk[33]      = {0};
+};
+
+struct ConfigAckData {
+  uint8_t  result = ACK_INVALID;
+  uint16_t detail = 0;
+};
+
 const char *statusName(uint8_t status);
 
 bool   decodeHello(const uint8_t *payload, size_t len, HelloData &out);
@@ -118,6 +142,20 @@ size_t encodeHello(const HelloData &in, uint8_t *out, size_t maxLen);
 
 bool   decodeAck(const uint8_t *payload, size_t len, AckData &out);
 size_t encodeAck(const AckData &in, uint8_t *out, size_t maxLen);
+
+// Config control payloads. All configuration messages are encrypted by the
+// current link key; SET/ACK use the old key, READY/COMMIT/PROBE use the new one.
+constexpr uint8_t CONFIG_PROTOCOL_VERSION = 1;
+bool   decodeConfigSet(const uint8_t *payload, size_t len, uint32_t &configId,
+                       LoraConfig &out);
+size_t encodeConfigSet(uint32_t configId, const LoraConfig &in, uint8_t *out,
+                       size_t maxLen);
+bool   decodeConfigAck(const uint8_t *payload, size_t len, uint32_t &configId,
+                       ConfigAckData &out);
+size_t encodeConfigAck(uint32_t configId, const ConfigAckData &in, uint8_t *out,
+                       size_t maxLen);
+bool   decodeConfigId(const uint8_t *payload, size_t len, uint32_t &configId);
+size_t encodeConfigId(uint32_t configId, uint8_t *out, size_t maxLen);
 
 // ---------------------------------------------------------------------------
 // Secure frame codec (AES-128-GCM only)

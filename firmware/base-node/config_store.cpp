@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "config.h"
+#include "lora_trial.h"
 
 namespace tuya_lora {
 
@@ -48,6 +49,8 @@ void setDefaults(BaseSettings &s) {
   copyText(s.haName, sizeof(s.haName), HA_DEVICE_NAME);
   copyText(s.timezone, sizeof(s.timezone), TIMEZONE);
 
+  copyText(s.loraPsk, sizeof(s.loraPsk),
+           "00000000000000000000000000000000");
   s.loraFrequencyMhz = LORA_FREQUENCY / 1000000.0f;
   s.loraSyncWord = LORA_SYNC_WORD;
   s.loraTxPower = LORA_TX_POWER;
@@ -103,6 +106,10 @@ void sanitize(BaseSettings &s) {
   if (s.sdUpdateWaitMs < 1000) s.sdUpdateWaitMs = SD_UPDATE_WAIT_MS;
   if (s.mqttPort == 0) s.mqttPort = 1883;
 
+  if (s.loraPsk[0] == '\0') {
+    copyText(s.loraPsk, sizeof(s.loraPsk),
+             "00000000000000000000000000000000");
+  }
   if (s.loraFrequencyMhz < 137.0f || s.loraFrequencyMhz > 1020.0f) {
     s.loraFrequencyMhz = LORA_FREQUENCY / 1000000.0f;
   }
@@ -322,6 +329,7 @@ void clearSettings() {
     prefs.end();
   }
   setDefaults(settings);
+  loraTrialClear();
 }
 
 bool wifiConfigured() {

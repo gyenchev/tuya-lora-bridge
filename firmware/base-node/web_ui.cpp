@@ -31,6 +31,11 @@ extern char dpJson[];
 extern char profileError[];
 extern const char *profileActiveId();
 extern uint16_t profileEntityCount();
+extern bool loraConfigBusy();
+extern String loraConfigStatusJson();
+extern bool startLoraConfigChange(const tuya_lora::LoraConfig &desired, String &error);
+extern void loraConfigFromSettings(const tuya_lora::BaseSettings &s, tuya_lora::LoraConfig &out);
+extern bool loraConfigEquals(const tuya_lora::LoraConfig &a, const tuya_lora::LoraConfig &b);
 
 namespace tuya_lora {
 
@@ -153,8 +158,15 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
       <h2>LoRa link</h2>
       <label for="lora_psk">Pre-shared key <span class="def">required</span></label>
       <input id="lora_psk" name="lora_psk" type="password" maxlength="32" pattern="[0-9A-Fa-f]{32}" autocomplete="new-password" placeholder="{{PSK_PLACEHOLDER}}">
-      <p class="hint">32 hex characters. Must be identical on the base and remote nodes.</p>
-      {{FIELDS_LORA}}
+      <button type="button" id="generate-psk">Generate new PSK</button>
+      <p class="hint">32 hex characters. The base sends a new key to the remote with the coordinated LoRa settings change.</p>
+      {{LORA_FIELDS}}
+      <div class="status" id="duty-info">Duty-cycle information will appear here.</div>
+      <p class="hint">EU/CEPT non-specific SRD reference: 868.0-868.6 MHz 1%, 868.7-869.2 MHz 0.1%, 869.4-869.65 MHz 10%, 869.7-870.0 MHz 1%. Alarm sub-bands have extra restrictions; verify local rules.</p>
+      <h2>Apply to both nodes</h2>
+      <p class="hint">The remote acknowledges first, then both nodes reinitialize their radios. The change is committed after the new link is proven; if there is no communication within 5 minutes, both restore the previous settings.</p>
+      <button type="submit" formaction="/lora/apply" formmethod="post" formnovalidate>Apply LoRa settings to both nodes</button>
+      <div class="status" id="lora-config-status">LoRa config: idle</div>
     </section>
 
     <section class="tab-panel" id="tab-device" data-tab-panel="device" role="tabpanel">
@@ -259,6 +271,123 @@ async function scanWifi(button) {
   }
   button.disabled = false;
 }
+
+const dutyBands = [
+  {lo: 868.0, hi: 868.6, limit: 1.0, label: '868.0-868.6 MHz'},
+  {lo: 868.6, hi: 868.7, limit: 1.0, label: '868.6-868.7 MHz (alarm, 10 mW)'},
+  {lo: 868.7, hi: 869.2, limit: 0.1, label: '868.7-869.2 MHz'},
+  {lo: 869.25, hi: 869.3, limit: 0.1, label: '869.25-869.3 MHz (alarm, 10 mW)'},
+  {lo: 869.3, hi: 869.4, limit: 1.0, label: '869.3-869.4 MHz (alarm, 10 mW)'},
+  {lo: 869.4, hi: 869.65, limit: 10.0, label: '869.4-869.65 MHz'},
+  {lo: 869.65, hi: 869.7, limit: 10.0, label: '869.65-869.7 MHz (alarm, 25 mW)'},
+  {lo: 869.7, hi: 870.0, limit: 1.0, label: '869.7-870.0 MHz'}
+];
+
+function loraBand(freq) {
+  return dutyBands.find(band => freq >= band.lo - 0.0001 && freq <= band.hi + 0.0001) || null;
+}
+
+function loraAirtimeMs(bytes, sf, bandwidthHz, codingRate, preamble) {
+  const tsym = 1000 * Math.pow(2, sf) / bandwidthHz;
+  const lowDataRate = tsym > 16 ? 1 : 0;
+  const numerator = 8 * bytes - 4 * sf + 28 + 16;
+  const denominator = 4 * (sf - 2 * lowDataRate);
+  const payloadSymbols = 8 + Math.max(0, Math.ceil(numerator / denominator) * codingRate);
+  return (preamble + 4.25 + payloadSymbols) * tsym;
+}
+
+function updateDutyInfo() {
+  const box = document.getElementById('duty-info');
+  if (!box) return;
+  const freq = Number(document.getElementById('lora_frequency_mhz').value);
+  const bw = Number(document.getElementById('lora_bandwidth_hz').value);
+  const sf = Number(document.getElementById('lora_sf').value);
+  const cr = Number(document.getElementById('lora_coding_rate').value);
+  const preamble = Number(document.getElementById('lora_preamble').value);
+  if (![freq, bw, sf, cr, preamble].every(Number.isFinite) || bw <= 0) {
+    box.textContent = 'Duty information unavailable for the current values.';
+    return;
+  }
+  const band = loraBand(freq);
+  if (!band) {
+    box.textContent = 'No preset EU 868-870 duty data for ' + freq.toFixed(3) +
+      ' MHz. Verify the local band rules before transmitting.';
+    return;
+  }
+  const airtime = loraAirtimeMs(60, sf, bw, cr, preamble);
+  const maxFrames = Math.floor((band.limit / 100) * 3600 * 1000 / airtime);
+  const spacing = airtime / (band.limit / 100) / 1000;
+  let text = band.label + ' · limit ' + band.limit.toFixed(1) + '% (' +
+    (band.limit * 36).toFixed(1) + ' s/hour) · 60 B frame ~' +
+    airtime.toFixed(0) + ' ms · max ~' + maxFrames + ' frames/hour · min spacing ~' +
+    spacing.toFixed(1) + ' s';
+  if (freq - bw / 2000000 < band.lo || freq + bw / 2000000 > band.hi) {
+    text += ' · WARNING: occupied bandwidth crosses the band edge.';
+  }
+  box.textContent = text;
+}
+
+const freqPreset = document.getElementById('lora_frequency_preset');
+const freqInput = document.getElementById('lora_frequency_mhz');
+if (freqPreset && freqInput) {
+  for (const option of freqPreset.querySelectorAll('option')) {
+    if (option.value && Math.abs(Number(option.value) - Number(freqInput.value)) < 0.0005) {
+      freqPreset.value = option.value;
+      break;
+    }
+  }
+  freqPreset.addEventListener('change', () => {
+    if (freqPreset.value) {
+      freqInput.value = freqPreset.value;
+      updateDutyInfo();
+    }
+  });
+}
+for (const id of ['lora_frequency_mhz', 'lora_bandwidth_hz', 'lora_sf',
+                  'lora_coding_rate', 'lora_tx_power', 'lora_preamble']) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', updateDutyInfo);
+}
+updateDutyInfo();
+
+const generatePsk = document.getElementById('generate-psk');
+if (generatePsk) {
+  generatePsk.addEventListener('click', async () => {
+    try {
+      const response = await fetch('/api/lora/psk', {method: 'POST', cache: 'no-store'});
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const data = await response.json();
+      document.getElementById('lora_psk').value = data.psk;
+      generatePsk.textContent = 'Generated - apply to both nodes';
+    } catch (error) {
+      generatePsk.textContent = 'Generation failed';
+    }
+  });
+}
+
+async function refreshLoraConfig() {
+  const box = document.getElementById('lora-config-status');
+  if (!box) return;
+  try {
+    const response = await fetch('/api/status', {cache: 'no-store'});
+    if (!response.ok) return;
+    const data = await response.json();
+    const cfg = data.lora_config;
+    if (!cfg) { box.textContent = 'LoRa config: unavailable'; return; }
+    let text = 'LoRa config: ' + cfg.state;
+    if (cfg.error) text += ' - ' + cfg.error;
+    if (cfg.remaining_ms > 0) text += ' - ' + Math.ceil(cfg.remaining_ms / 1000) + ' s remaining';
+    if (cfg.last_contact_age_ms >= 0) {
+      text += ' - last contact ' + Math.ceil(cfg.last_contact_age_ms / 1000) + ' s ago';
+    }
+    if (cfg.attempts) text += ' - attempts ' + cfg.attempts;
+    box.textContent = text;
+  } catch (error) {
+    box.textContent = 'LoRa config: status unavailable';
+  }
+}
+setInterval(refreshLoraConfig, 2000);
+refreshLoraConfig();
 </script>
 </body>
 </html>)HTML";
@@ -1001,6 +1130,116 @@ String renderFields(const BaseSettings &s, const char *tab) {
   return out;
 }
 
+String renderLoraFields(const BaseSettings &s) {
+  String out;
+  auto selectOption = [](String &target, const String &value,
+                         const String &label, bool selected) {
+    target += "<option value=\"";
+    target += value;
+    target += "\"";
+    if (selected) target += " selected";
+    target += ">";
+    target += label;
+    target += "</option>";
+  };
+
+  out += "<label for=\"lora_frequency_preset\">Frequency preset <span class=\"def\">fills the exact frequency field</span></label>";
+  out += "<select id=\"lora_frequency_preset\">";
+  out += "<option value=\"\">Custom / exact frequency</option>";
+  struct FreqGroup {
+    const char *label;
+    float values[8];
+    uint8_t count;
+  };
+  const FreqGroup groups[] = {
+      {"868.0-868.6 MHz (1% duty)",
+       {868.0f, 868.1f, 868.2f, 868.3f, 868.4f, 868.5f, 868.6f},
+       7},
+      {"868.7-869.2 MHz (0.1% duty)",
+       {868.7f, 868.8f, 868.9f, 869.0f, 869.1f, 869.2f},
+       6},
+      {"869.4-869.65 MHz (10% duty)",
+       {869.4f, 869.5f, 869.525f, 869.6f, 869.65f},
+       5},
+      {"869.7-870.0 MHz (1% duty)",
+       {869.7f, 869.8f, 869.9f, 870.0f},
+       4},
+  };
+  for (const auto &group : groups) {
+    out += "<optgroup label=\"";
+    out += group.label;
+    out += "\">";
+    for (uint8_t i = 0; i < group.count; ++i) {
+      const String value = String(group.values[i], 3);
+      selectOption(out, value, String(group.values[i], 3) + " MHz", false);
+    }
+    out += "</optgroup>";
+  }
+  out += "</select>";
+  out += "<label for=\"lora_frequency_mhz\">Frequency (MHz)</label>";
+  out += "<input id=\"lora_frequency_mhz\" name=\"lora_frequency_mhz\" type=\"number\" min=\"868\" max=\"870\" step=\"0.001\" value=\"";
+  out += String(s.loraFrequencyMhz, 3);
+  out += "\">";
+  out += "<p class=\"hint\">868-870 MHz presets. Use the exact field for any other allowed frequency.</p>";
+
+  out += "<label for=\"lora_bandwidth_hz\">Bandwidth</label>";
+  out += "<select id=\"lora_bandwidth_hz\" name=\"lora_bandwidth_hz\">";
+  const struct {
+    uint32_t hz;
+    const char *label;
+  } bandwidths[] = {
+      {7800, "7.8 kHz"},     {10400, "10.4 kHz"},  {15600, "15.6 kHz"},
+      {20800, "20.8 kHz"},   {31250, "31.25 kHz"}, {41700, "41.7 kHz"},
+      {62500, "62.5 kHz"},   {125000, "125 kHz"},  {250000, "250 kHz"},
+      {500000, "500 kHz"},
+  };
+  for (const auto &bw : bandwidths) {
+    selectOption(out, String(bw.hz), bw.label, s.loraBandwidthHz == bw.hz);
+  }
+  out += "</select>";
+  out += "<p class=\"hint\">Wider bandwidth is faster but less sensitive. The duty panel recalculates airtime.</p>";
+
+  out += "<label for=\"lora_sf\">Spreading factor</label>";
+  out += "<select id=\"lora_sf\" name=\"lora_sf\">";
+  for (uint8_t sf = 7; sf <= 12; ++sf) {
+    selectOption(out, String(sf), "SF" + String(sf), s.loraSf == sf);
+  }
+  out += "</select>";
+  out += "<p class=\"hint\">Higher SF increases range and airtime; lower SF is faster.</p>";
+
+  out += "<label for=\"lora_coding_rate\">Coding rate</label>";
+  out += "<select id=\"lora_coding_rate\" name=\"lora_coding_rate\">";
+  for (uint8_t cr = 5; cr <= 8; ++cr) {
+    selectOption(out, String(cr), "4/" + String(cr), s.loraCodingRate == cr);
+  }
+  out += "</select>";
+
+  out += "<label for=\"lora_tx_power\">TX power (dBm)</label>";
+  out += "<select id=\"lora_tx_power\" name=\"lora_tx_power\">";
+  const int8_t powers[] = {-1, 2, 5, 8, 11, 14, 17, 20};
+  for (int8_t power : powers) {
+    selectOption(out, String(power), String(power) + " dBm",
+                 s.loraTxPower == power);
+  }
+  out += "</select>";
+  out += "<p class=\"hint\">Conducted power. ERP also depends on antenna gain and the selected band limit.</p>";
+
+  out += "<label for=\"lora_preamble\">Preamble length</label>";
+  out += "<input id=\"lora_preamble\" name=\"lora_preamble\" type=\"number\" min=\"6\" max=\"65535\" step=\"1\" list=\"lora_preamble_presets\" value=\"";
+  out += String(s.loraPreamble);
+  out += "\">";
+  out += "<datalist id=\"lora_preamble_presets\"><option value=\"6\"><option value=\"8\"><option value=\"12\"><option value=\"16\"><option value=\"32\"></datalist>";
+
+  out += "<label for=\"lora_sync_word\">Sync word</label>";
+  out += "<input id=\"lora_sync_word\" name=\"lora_sync_word\" type=\"text\" maxlength=\"4\" value=\"0x";
+  char sync[8];
+  snprintf(sync, sizeof(sync), "%02X", s.loraSyncWord);
+  out += sync;
+  out += "\">";
+  out += "<p class=\"hint\">Both nodes use this value automatically during the coordinated change.</p>";
+  return out;
+}
+
 bool applyField(BaseSettings &s, const FieldSpec &f, String &error) {
   uint8_t *base = reinterpret_cast<uint8_t *>(&s);
   uint8_t *p = base + f.offset;
@@ -1145,17 +1384,28 @@ String mqttStatusText() {
   return String("connecting to ") + target;
 }
 
+bool pskDefaultZero(const char *psk) {
+  return psk && strcmp(psk, "00000000000000000000000000000000") == 0;
+}
+
 String pskStatusText(const BaseSettings &s) {
+  if (pskDefaultZero(s.loraPsk)) return "default zero (insecure)";
   return isValidPsk(s.loraPsk) ? "set" : "not set";
 }
 
 String pskWarningText(const BaseSettings &s) {
+  if (pskDefaultZero(s.loraPsk)) {
+    return "<div class=\"warn\">The LoRa PSK is the all-zero default. The link "
+           "works for initial setup, but anyone with this firmware can decrypt "
+           "it. Generate a new key before deployment.</div>";
+  }
   if (isValidPsk(s.loraPsk)) return "";
   return "<div class=\"warn\">LoRa PSK is not set. The base cannot talk to the "
          "charger until both nodes have the same 32-character hex key.</div>";
 }
 
 String pskPlaceholder(const BaseSettings &s) {
+  if (pskDefaultZero(s.loraPsk)) return "generate a key or enter 32 hex characters";
   return isValidPsk(s.loraPsk) ? "leave blank to keep current"
                                : "32 hex characters";
 }
@@ -1269,7 +1519,7 @@ void renderForm(const BaseSettings &s, const String &error, int status,
   page.replace("{{HA_NAME}}", htmlEscape(s.haName));
   page.replace("{{TIMEZONE_OPTIONS}}", timezoneOptions(s));
   page.replace("{{FIELDS_MQTT}}", renderFields(s, "mqtt"));
-  page.replace("{{FIELDS_LORA}}", renderFields(s, "lora"));
+  page.replace("{{LORA_FIELDS}}", renderLoraFields(s));
   page.replace("{{FIELDS_HA}}", renderFields(s, "device"));
   page.replace("{{FIELDS_TIMING}}", renderFields(s, "timing"));
   page.replace("{{FIELDS_CONTROL}}", renderFields(s, "control"));
@@ -1396,6 +1646,8 @@ void handleApiStatus() {
   serializeJson(loraDoc, loraJson);
   json += ",\"lora_stats\":";
   json += loraJson;
+  json += ",\"lora_config\":";
+  json += loraConfigStatusJson();
   json += "}";
   server->sendHeader("Cache-Control", "no-store");
   server->send(200, "application/json", json);
@@ -1487,6 +1739,10 @@ bool validate(const BaseSettings &s, String &error, String &tab) {
 }
 
 void handleSave() {
+  if (loraConfigBusy()) {
+    renderForm(settings, "A LoRa configuration change is in progress. Wait for it to finish or fail before saving other settings.", 409, "lora");
+    return;
+  }
   if (!server->hasArg("wifi_ssid")) {
     server->send(400, "text/plain", "Bad request");
     return;
@@ -1535,6 +1791,17 @@ void handleSave() {
     return;
   }
 
+  tuya_lora::LoraConfig currentConfig;
+  tuya_lora::LoraConfig nextConfig;
+  loraConfigFromSettings(settings, currentConfig);
+  loraConfigFromSettings(next, nextConfig);
+  if (!loraConfigEquals(currentConfig, nextConfig)) {
+    renderForm(settings,
+               "LoRa link settings must be applied with Apply LoRa settings to both nodes.",
+               400, "lora");
+    return;
+  }
+
   settings = next;
   if (!saveSettings()) {
     renderForm(next, "Could not write settings to NVS.", 500, tab);
@@ -1546,6 +1813,51 @@ void handleSave() {
                           "Open the status page at http://<base-ip>:" +
                               String(settings.webUiPort) + "/.");
   rebootAtMs = millis() + 1500;
+}
+
+void handleLoraApply() {
+  if (!server->hasArg("lora_frequency_mhz")) {
+    server->send(400, "text/plain", "Bad request");
+    return;
+  }
+
+  BaseSettings next = settings;
+  copyArg("lora_psk", next.loraPsk, sizeof(next.loraPsk), true);
+  String error;
+  String tab = "lora";
+  if (!applyAdvancedFields(next, error, tab)) {
+    renderForm(settings, error, 400, "lora");
+    return;
+  }
+  if (!isValidPsk(next.loraPsk)) {
+    renderForm(settings, "LoRa PSK must be exactly 32 hex characters.", 400,
+               "lora");
+    return;
+  }
+
+  tuya_lora::LoraConfig desired;
+  loraConfigFromSettings(next, desired);
+  if (!startLoraConfigChange(desired, error)) {
+    renderForm(settings, error, 400, "lora");
+    return;
+  }
+
+  server->sendHeader("Location", "/settings#lora");
+  server->send(303, "text/plain", "");
+}
+
+void handleGeneratePsk() {
+  char psk[33];
+  do {
+    for (uint8_t i = 0; i < 16; ++i) {
+      snprintf(psk + i * 2, 3, "%02x", esp_random() & 0xFF);
+    }
+  } while (strcmp(psk, "00000000000000000000000000000000") == 0);
+  String json = "{\"psk\":\"";
+  json += psk;
+  json += "\"}";
+  server->sendHeader("Cache-Control", "no-store");
+  server->send(200, "application/json", json);
 }
 
 void handleFactory() {
@@ -1766,6 +2078,8 @@ void webUiBegin() {
   server->on("/api/profile/save", HTTP_OPTIONS, handleProfileOptions);
   server->on("/api/status", HTTP_GET, handleApiStatus);
   server->on("/save", HTTP_POST, handleSave);
+  server->on("/lora/apply", HTTP_POST, handleLoraApply);
+  server->on("/api/lora/psk", HTTP_POST, handleGeneratePsk);
   server->on("/factory", HTTP_POST, handleFactory);
   server->on("/scan", HTTP_GET, handleScan);
   server->onNotFound(handleNotFound);

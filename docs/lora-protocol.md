@@ -64,10 +64,17 @@ boot_id (4) || seq (4) || direction (1) || 0x000000
 | `0x05` | `DP_CHUNK` | remote → base | `req_id` (2), index (1), count (1), data (≤80) |
 | `0x06` | `DP_ACK` | base → remote | `req_id` (2), bitmap (4) |
 | `0x07` | `DP_SET` | base → remote | raw Tuya `dps` JSON fragment |
+| `0x08` | `CONFIG_SET` | base → remote | config ID, PHY values, PSK |
+| `0x09` | `CONFIG_ACK` | remote → base | config ID, result, detail |
+| `0x0A` | `CONFIG_READY` | remote → base | config ID |
+| `0x0B` | `CONFIG_COMMIT` | base → remote | config ID |
+| `0x0C` | `CONFIG_COMMIT_ACK` | remote → base | config ID, result, detail |
+| `0x0D` | `CONFIG_PROBE` | base → remote | config ID |
+| `0x0E` | `CONFIG_PROBE_ACK` | remote → base | config ID |
 
-There are no separate status, time or configuration frames. The only data path is
-the DP snapshot proxy. The remote performs `tuya.query()` or `tuya.setDps()` and
-does not interpret DP numbers.
+The DP snapshot and control messages are the operational data path. The remote
+performs `tuya.query()` or `tuya.setDps()` and does not interpret DP numbers.
+Configuration frames are described below.
 
 ## DP snapshot exchange
 
@@ -132,12 +139,54 @@ struct __attribute__((packed)) AckPayload {
 ```c
 struct __attribute__((packed)) HelloPayload {
   uint8_t  role;        // 1 remote node, 2 base node
-  uint8_t  fw_version;  // protocol payload version
+  uint8_t  fw_version;  // protocol payload version; 2 supports CONFIG_*
   uint32_t boot_id;
 };
 ```
 
 `boot_id` is also present in the secure header. The payload copy is for logging.
+The remote sends HELLO after boot and every 60 seconds so the base can track its
+capability version. The base refuses a coordinated change from a remote that
+reports an older version.
+
+## Coordinated LoRa configuration
+
+The base owns the full LoRa link configuration:
+
+- frequency, sync word, TX power, spreading factor, bandwidth, coding rate and
+  preamble;
+- the 32-character hex PSK.
+
+The base **LoRa** tab sends a staged change:
+
+1. Base stores the old/new config and a random `config_id` in NVS, then sends
+   `CONFIG_SET` using the old PHY/PSK. It retries for up to 30 seconds.
+2. Remote validates the values, stores its own trial record, saves the new
+   settings, sends `CONFIG_ACK` using the old PHY/PSK, then reinitializes its
+   radio and codec live. It does not reboot.
+3. Base receives ACK, saves the new settings and trial state, reinitializes its
+   radio and codec live, and sends `CONFIG_PROBE`.
+4. Remote sends `CONFIG_READY` under the new PHY/PSK.
+5. Base receives READY, sends `CONFIG_COMMIT`, receives
+   `CONFIG_COMMIT_ACK`, and clears the old configuration.
+6. Remote clears its old configuration on `CONFIG_COMMIT`.
+
+The normal handshake completes in seconds. Both nodes keep the old config in a
+dedicated NVS trial namespace until commit. If the new link is not established
+within five minutes after applying, each node restores the old PHY/PSK live and
+clears the trial. A reboot during the trial resumes the pending state.
+
+The initial PSK default is 32 zero hex characters on both nodes so a fresh pair
+can establish the first link. The base **LoRa** tab has a **Generate new PSK**
+button; the generated key is filled into the form and sent to both nodes with
+the next coordinated change. The zero default is insecure and must be replaced
+before deployment.
+
+The base LoRa tab provides EU 868-870 MHz frequency presets, common bandwidth /
+SF / coding-rate / TX-power dropdowns, custom frequency entry, and a duty-cycle
+calculator for the selected band. The 1% reference applies to the EU
+868.0-868.6 MHz sub-band; the other sub-bands have 0.1% or 10% limits. The UI
+shows the allowed airtime, estimated frame airtime and minimum spacing.
 
 ## Control DP mapping
 
@@ -265,7 +314,7 @@ The base publishes `tuya-lora/<slug>/link` on every valid LoRa frame and every
   "seq": 42,
   "boot_id": 123456789,
   "last_seen": "2026-10-22T11:32:05Z",
-  "fw": "0.3.0"
+  "fw": "0.4.0"
 }
 ```
 
