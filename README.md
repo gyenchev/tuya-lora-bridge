@@ -53,12 +53,13 @@ The Tuya device stays on its own local protections and schedules.
 - AES-128-GCM encrypted LoRa frames with `boot_id` and sequence replay
   protection.
 - Retained MQTT state, raw DP snapshot, availability and link diagnostics.
-- Browser-side profile catalog covering the complete tuya-local descriptor
-  collection (1,779 devices at the pinned commit), grouped by device type and
-  converted in the browser to precompiled Home Assistant MQTT discovery packs.
-- A single active profile per base. Pick a device from the online catalog or
-  edit the generated profile JSON directly; the JSON editor is the source of
-  truth for entities, telemetry and command mappings.
+- Browser-side profile catalog that browses the upstream tuya-local repository
+  at runtime, builds a grouped index in a Web Worker, caches it by commit SHA,
+  and converts the selected descriptor into a precompiled Home Assistant MQTT
+  discovery pack.
+- A single active profile per base. Pick a device from the live upstream
+  catalog or edit the generated profile JSON directly; the JSON editor is the
+  source of truth for entities, telemetry and command mappings.
 - Native MQTT entities for lights, fans, covers, climate, water heaters,
   humidifiers, locks, alarms, sirens, valves, events, time/datetime,
   lawn mowers, cameras, sensors, binary sensors, switches, numbers, selects,
@@ -116,10 +117,10 @@ tuya-lora-bridge/
 ├── web/
 │   ├── README.md
 │   ├── profile_builder.html
+│   ├── profile_worker.mjs
 │   ├── profile_converter.mjs
 │   ├── profile_mapping.mjs
 │   ├── build_assets.mjs
-│   ├── catalog.json
 │   ├── package.json
 │   └── package-lock.json
 └── firmware/
@@ -234,8 +235,8 @@ Connect to the base node's `TuyaLoraBase-Setup` AP (default password
 - MQTT broker host, port and credentials;
 - LoRa link settings. Use the base **LoRa** tab to generate a random PSK and apply the full radio configuration to both nodes;
 - Home Assistant device name and discovery prefix;
-- the **Profile** tab: open the profile editor, choose a device from the online
-  tuya-local catalog, fine-tune its JSON, and save it to the base;
+- the **Profile** tab: open the profile editor, browse the upstream tuya-local
+  repository, fine-tune the generated JSON, and save it to the base;
 - optional timing and control settings.
 
 The base stores exactly one active profile: metadata plus one precompiled Home
@@ -347,9 +348,13 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 
 ## Scope and limitations
 
-- The browser catalog covers all 1,779 descriptors in the pinned tuya-local
-  collection. Every descriptor converts; there is no “milestone”/unsupported
-  status in the catalog.
+- The browser catalog covers the tuya-local descriptors at the selected
+  repository ref. Every descriptor is attempted; conversion errors are shown
+  per profile instead of hiding it from the list.
+- The first catalog visit downloads the upstream device YAML files (about 1,779
+  files / 6.8 MB at the time of writing) in a Web Worker to build the grouped
+  index. The compact index is cached in IndexedDB by commit SHA, so later visits
+  are fast.
 - Native MQTT platforms are generated for light, fan, cover, climate,
   water_heater, humidifier, lock, alarm_control_panel, siren, valve,
   event, time, datetime, lawn_mower, camera, sensor, binary_sensor, switch,
@@ -363,9 +368,9 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
   file per discovery entity in LittleFS. The base accepts uploads up to 250 KB,
   up to 256 discovery entities, and 24 KB per discovery item. The custom
   `partitions.csv` gives LittleFS 384 KB and two 1.75 MB OTA app partitions.
-- The online catalog requires browser internet access (GitHub raw + js-yaml
-  CDN). There is no offline profile catalog; the base stores only the profile
-  that was saved to it.
+- The online catalog requires browser internet access (GitHub API, jsDelivr or
+  raw.githubusercontent.com, and the js-yaml CDN). There is no offline catalog;
+  the base stores only the profile that was saved to it.
 - One Tuya device is supported per bridge. Simultaneous multi-device support is
   not implemented.
 - Raw DP snapshots are capped at 2560 bytes (32 LoRa chunks of 80 bytes).
@@ -389,7 +394,7 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 | [`docs/home-assistant.md`](docs/home-assistant.md) | MQTT topics, discovery, entities, automations and dashboards |
 | [`docs/hardware-safety.md`](docs/hardware-safety.md) | BOM, power, enclosure, radio rules and electrical safety |
 | [`docs/testing.md`](docs/testing.md) | Validation matrix, acceptance checks and known limitations |
-| [`web/README.md`](web/README.md) | Browser profile catalog, JSON editor, converter and catalog generation |
+| [`web/README.md`](web/README.md) | Runtime tuya-local browser, JSON editor, converter and asset embedding |
 | [`firmware/README.md`](firmware/README.md) | Build, flash, web UI settings, SD updates and board notes |
 
 ## License and disclaimer
@@ -398,8 +403,7 @@ This project is released under the **MIT License**. Copyright (c) 2026 Georgi
 Enchev. See [`LICENSE`](LICENSE).
 
 Portions derived from **tuya-local** — including the profile mapping/conversion
-logic and the generated device catalog/profile assets — are also MIT-licensed
-and retain their upstream copyright. See
+logic — are also MIT-licensed and retain their upstream copyright. See
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 This project is **100% vibecoded / AI-generated** and is not a certified

@@ -12,13 +12,12 @@ the MIT License below and retain their upstream copyright.
   - tuya-local-style device descriptors and profile metadata;
   - the profile/entity mapping behaviour implemented in
     `web/profile_mapping.mjs` and `web/profile_converter.mjs`;
-  - generated catalog and firmware profile assets derived from the above,
-    including `web/catalog.json` and generated files in `firmware/`.
+  - firmware profile assets generated from the above.
 
-The catalog generator reads a local tuya-local checkout; the browser fetches
-descriptor YAML from the upstream repository. No tuya-local code is vendored as
-a git submodule, but the derived source and generated files above remain subject
-to the upstream MIT terms.
+The browser fetches descriptor YAML directly from the upstream repository at
+runtime; no catalog is generated from a local checkout. No tuya-local code is
+vendored as a git submodule, but the derived source and generated firmware assets
+above remain subject to the upstream MIT terms.
 
 ```text
 Copyright 2018 Nik Rolls, 2026 Jason Rumney, 2022-2026 other contributors as listed in ACKNOWLEDGEMENTS.md

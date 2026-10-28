@@ -275,14 +275,17 @@ Open `/profiles` on the base:
 
 1. The active profile is loaded from `/api/profile/export` and shown in the
    textarea as JSON.
-2. Selecting a device in the online catalog fetches its YAML, converts it and
-   replaces the textarea content.
+2. The page fetches the tuya-local device tree for the selected repository/ref.
+   It shows a flat searchable list immediately and builds a grouped index in the
+   background; selecting a descriptor fetches its YAML, converts it and replaces
+   the textarea content.
 3. Edit the metadata, telemetry, discovery entries or command templates.
 4. **Save to base** converts the JSON to NDJSON and uploads it to
    `/api/profile/save`. The base reboots with the new profile active.
 
-There is no auto-detection, built-in profile list, separate custom-profile
-store or offline catalog. The one JSON document in the editor is the profile.
+There is no auto-detection, built-in profile list, generated catalog file,
+separate custom-profile store or offline catalog. The browser queries upstream
+directly, and the one JSON document in the editor is the profile.
 
 ### Profile JSON
 

@@ -1,21 +1,10 @@
 # Browser profile catalog and converter
 
-The base node no longer stores the full tuya-local catalog. The browser fetches
-the catalog and descriptor YAML, converts the selected descriptor into
-precompiled Home Assistant MQTT discovery configs, and streams the result to the
-base. The base stores only the selected pack.
-
-## What is generated
-
-The catalog is generated from a pinned tuya-local checkout:
-
-- [`catalog.json`](catalog.json) — all descriptors, grouped by device type,
-  with the pinned tuya-local commit and raw YAML base URL.
-- `firmware/base-node/web_assets.cpp/.h` — the profile editor page, converter
-  JS and mapping JS embedded in the base firmware.
-
-At the current pin there are **1,779 descriptors and all 1,779 convert**. There
-is no “milestone”/unsupported gate in the builder.
+The base node stores only the selected profile pack. The profile editor in the
+browser browses the upstream [tuya-local](https://github.com/make-all/tuya-local)
+repository directly, converts a selected YAML descriptor into precompiled Home
+Assistant MQTT discovery configs, and streams the result to the base. There is no
+catalog file to generate or commit.
 
 ## Browser flow
 
@@ -23,25 +12,34 @@ Open `http://<base-ip>/profiles` from the base UI. The page:
 
 1. loads the active profile from `/api/profile/export` and shows it as editable
    JSON;
-2. optionally loads the online catalog from GitHub raw and the descriptor YAML
-   from the pinned tuya-local commit;
-3. converts the selected descriptor in the browser into the same profile JSON;
-4. lets you fine-tune the metadata, telemetry and discovery entries in the
+2. fetches the tuya-local device tree from the GitHub API for the chosen
+   repository and ref;
+3. shows a flat, searchable file list immediately;
+4. builds a grouped catalog in a Web Worker by downloading the descriptor YAML
+   files in parallel, then caches the compact result in IndexedDB;
+5. converts the selected descriptor in the browser into the profile JSON;
+6. lets you fine-tune the metadata, telemetry and discovery entries in the
    textarea;
-5. uploads the edited profile to `/api/profile/save` as NDJSON.
+7. uploads the edited profile to `/api/profile/save` as NDJSON.
 
-The online catalog URL in the builder is a branch/raw URL. For a branch whose
-name contains `/`, use the `refs/heads/` form, for example:
+The repository defaults to `make-all/tuya-local` and the ref to `main`. Both are
+editable, so a tag or commit SHA can be used for a reproducible catalog. The
+resolved commit SHA is shown in the UI and recorded in each pack's `source`
+field.
 
-```text
-https://raw.githubusercontent.com/gyenchev/tuya-lora-bridge/refs/heads/feature/dp-profiles/web/catalog.json
-```
+### Grouped index
 
-The builder default now uses `refs/heads/main`; the catalog can also be pinned
-to a commit for reproducibility.
+Upstream has no machine-readable grouped catalog, so grouping requires parsing
+the YAML descriptors. The first visit downloads the device YAML files (about
+1,779 files / 6.8 MB at the time of writing) with limited concurrency and builds
+a compact catalog in the browser. This can take tens of seconds. The result is
+cached in IndexedDB by repository and commit SHA; later visits load the grouped
+list instantly. The **Build grouped catalog** button rebuilds it, and **Cancel**
+leaves the flat file list usable.
 
-The converter loads `js-yaml` from jsDelivr for online conversion. There is no
-offline catalog; the base stores only the saved profile.
+YAML files are fetched from jsDelivr first and raw.githubusercontent.com as a
+fallback. The GitHub API is used only for the tree and commit SHA, so the
+unauthenticated API rate limit is not a concern for normal use.
 
 ## Conversion output
 
@@ -69,9 +67,8 @@ Each pack is a list of Home Assistant MQTT discovery entries plus metadata:
 ```
 
 Discovery object IDs are semantic slugs derived from the entity name (for
-example `Status` → `status`, `Battery level` → `battery_level`), lowercased
-and separated with underscores. The base prefixes them with `pack_` when
-publishing.
+example `Status` → `status`, `Battery level` → `battery_level`), lowercased and
+separated with underscores. The base prefixes them with `pack_` when publishing.
 
 The ESP32 resolves the `__STATE_TOPIC__`, `__CMD_TOPIC__` and `__RAW_ENTITY__`
 tokens at publish time, then adds the device, availability and origin blocks. It
@@ -79,9 +76,9 @@ also publishes a hidden **Raw DPs** sensor whose `dps` attribute contains the
 complete raw DP snapshot. Command templates use that sensor to perform
 conditional mappings, bit masks and packed-value read-modify-write.
 
-The pack metadata also contains a small `telemetry` array: labels, DP IDs,
-enum maps and scaling for the status page. `/api/profile/telemetry` serves it and
-the status page renders the values from the current raw snapshot. Packs without
+The pack metadata also contains a small `telemetry` array: labels, DP IDs, enum
+maps and scaling for the status page. `/api/profile/telemetry` serves it and the
+status page renders the values from the current raw snapshot. Packs without
 telemetry metadata fall back to a table of raw DPs.
 
 ### Native platforms
@@ -94,17 +91,17 @@ The converter generates native MQTT discovery for:
 `button` and `text`.
 
 Vacuums, media players, Tuya remotes and Tuya infrared emitters have no single
-standard MQTT platform; those descriptors are decomposed into switches,
-numbers, selects, buttons, text entities and sensors. All leftover DPs remain
-visible in the Raw DPs sensor.
+standard MQTT platform; those descriptors are decomposed into switches, numbers,
+selects, buttons, text entities and sensors. All leftover DPs remain visible in
+the Raw DPs sensor.
 
 ### Raw-DP sensor
 
 The base always publishes, with an active profile:
 
 - the retained raw snapshot at `state_topic`;
-- one retained per-DP topic at `<state_topic>/<dp-id>` (used by the camera
-  image entity and available for other automations);
+- one retained per-DP topic at `<state_topic>/<dp-id>` (used by the camera image
+  entity and available for other automations);
 - a `sensor.<ha-name>_pack_raw` entity whose `dps` attribute is the complete DP
   map.
 
@@ -112,14 +109,13 @@ The base always publishes, with an active profile:
 
 Packs are uploaded as newline-delimited JSON:
 
-- first line: metadata (`id`, `name`, `device_type`, `source`, `telemetry`,
-  `discovery_count`);
+- first line: metadata (`format`, `id`, `name`, `device_type`, `source`,
+  `telemetry`, `discovery_count`);
 - following lines: one discovery item per line.
 
 The base writes each item to a small LittleFS file and commits the metadata
 last. This avoids the heap cost of holding a large pack and allows the largest
-tuya-local descriptors (181 KB, 81 entities at the current catalog pin) to be
-stored and published.
+tuya-local descriptors to be stored and published.
 
 Limits:
 
@@ -133,55 +129,23 @@ Limits:
 | MQTT buffer | 8192 bytes recommended for browser packs |
 
 Large discovery configs are published as one MQTT message. Set the base
-**MQTT buffer size** to at least 8192 bytes; a 2048-byte buffer silently
-rejects large discovery configs, leaving HA on a stale/old entity. After
-changing the buffer, reboot the base and reload the HA MQTT integration if
-needed.
+**MQTT buffer size** to at least 8192 bytes; a 2048-byte buffer silently rejects
+large discovery configs, leaving HA on a stale/old entity. After changing the
+buffer, reboot the base and reload the HA MQTT integration if needed.
 
-The base sketch contains a custom `partitions.csv`:
+## Embedding the editor in firmware
 
-```text
-nvs       0x9000   20K
-otadata   0xe000    8K
-app0      0x10000  1792K
-app1      0x1d0000 1792K
-spiffs    0x390000 384K
-coredump  0x3f0000 64K
-```
-
-## Regenerating the catalog and assets
-
-Requirements: Node 20+ and `npm`.
+The editor, converter, mapping engine and Web Worker are embedded in
+`firmware/base-node/web_assets.cpp`:
 
 ```bash
-cd web
-npm install
-node build_assets.mjs \
-  --source /path/to/tuya-local/custom_components/tuya_local/devices
+node web/build_assets.mjs
 ```
 
-The script:
-
-- parses all YAML descriptors with `js-yaml`;
-- classifies device types;
-- builds every profile to compute entity counts and pack sizes;
-- writes `catalog.json`;
-- generates `firmware/base-node/web_assets.cpp/.h` with the profile editor HTML,
-  converter JS and mapping JS.
-
-## Building the base
-
-The custom partition table is picked up automatically from the sketch folder:
-
-```bash
-LIBS="$HOME/Documents/Arduino/libraries"
-BASE_FQBN=esp32:esp32:ttgo-lora32:PartitionScheme=min_spiffs,UploadSpeed=460800
-arduino-cli compile --fqbn "$BASE_FQBN" --libraries "$LIBS" firmware/base-node
-arduino-cli upload  --fqbn "$BASE_FQBN" --libraries "$LIBS" -p /dev/cu.usbserial-... firmware/base-node
-```
-
-The app binary is about 1.64 MB; the custom app partition is 1.75 MB. Back up
-NVS (`0x9000`, `0x5000`) before the first switch to this partition table.
+No `npm install`, local tuya-local checkout or catalog generation is required.
+The script only reads `profile_builder.html`, `profile_converter.mjs`,
+`profile_mapping.mjs` and `profile_worker.mjs` and regenerates
+`web_assets.cpp/.h`.
 
 ## Adding platform coverage
 
@@ -192,6 +156,7 @@ profile. The raw-DP sensor remains the complete view of every DP.
 
 ## License
 
-The converter, mapping engine and generated catalog include material derived from
-tuya-local under the MIT License. See [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
-The project is MIT licensed; see [`../LICENSE`](../LICENSE).
+The converter, mapping engine and catalog-building logic include material
+derived from tuya-local under the MIT License. See
+[`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md). The project is MIT
+licensed; see [`../LICENSE`](../LICENSE).
