@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "config.h"
+#include "lora_trial.h"
 
 namespace tuya_lora {
 
@@ -58,6 +59,8 @@ void setDefaults(RemoteSettings &s) {
   s.tuyaPollIntervalMs = TUYA_POLL_INTERVAL_MS;
   s.tuyaReconnectIntervalMs = TUYA_RECONNECT_INTERVAL_MS;
 
+  copyText(s.loraPsk, sizeof(s.loraPsk),
+           "00000000000000000000000000000000");
   s.loraFrequencyMhz = LORA_FREQUENCY / 1000000.0f;
   s.loraSyncWord = LORA_SYNC_WORD;
   s.loraTxPower = LORA_TX_POWER;
@@ -122,6 +125,10 @@ void sanitize(RemoteSettings &s) {
     s.tuyaReconnectIntervalMs = TUYA_RECONNECT_INTERVAL_MS;
   }
 
+  if (s.loraPsk[0] == '\0') {
+    copyText(s.loraPsk, sizeof(s.loraPsk),
+             "00000000000000000000000000000000");
+  }
   if (s.loraFrequencyMhz < 137.0f || s.loraFrequencyMhz > 1020.0f) {
     s.loraFrequencyMhz = LORA_FREQUENCY / 1000000.0f;
   }
@@ -316,6 +323,7 @@ void clearSettings() {
     prefs.end();
   }
   setDefaults(settings);
+  loraTrialClear();
 }
 
 bool apConfigured() {

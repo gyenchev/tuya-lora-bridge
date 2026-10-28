@@ -22,12 +22,14 @@
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <esp_wifi_ap_get_sta_list.h>
+#include <ArduinoJson.h>
 
 #include "boot_guard.h"
 #include "config.h"
 #include "config_store.h"
 #include "tuya_client.h"
 #include "lora_protocol.h"
+#include "lora_trial.h"
 #include "sd_update.h"
 #include "web_ui.h"
 
@@ -57,6 +59,7 @@ bool everConnected = false;
 
 bool loraReady = false;
 bool loraHelloDone = false;
+uint32_t lastLoraHelloMs = 0;
 bool displayReady = false;
 bool displayAsleep = false;
 uint32_t loraFrameCount = 0;
@@ -73,6 +76,27 @@ uint8_t dpRetries = 0;
 uint32_t dpLastAckBitmap = 0;
 char dpJson[tuya_lora::DP_MAX_JSON + 1] = {0};
 size_t dpJsonLen = 0;
+
+// Coordinated LoRa configuration state. The base is the coordinator; this node
+// keeps the old settings available until the new link is proven.
+enum RemoteLoraCfgPhase : uint8_t {
+  REMOTE_LORA_CFG_IDLE = 0,
+  REMOTE_LORA_CFG_APPLYING,
+  REMOTE_LORA_CFG_PENDING,
+  REMOTE_LORA_CFG_COMMITTED,
+  REMOTE_LORA_CFG_ERROR,
+};
+
+RemoteLoraCfgPhase remoteLoraCfgPhase = REMOTE_LORA_CFG_IDLE;
+LoraTrial remoteLoraCfgTrial;
+uint32_t remoteLoraCfgId = 0;
+uint32_t remoteLoraCfgDeadlineMs = 0;
+uint32_t remoteLoraCfgNextReadyMs = 0;
+uint32_t remoteLoraCfgLastContactMs = 0;
+char remoteLoraCfgError[96] = "";
+
+constexpr uint32_t REMOTE_LORA_CFG_TIMEOUT_MS = 300000UL;
+constexpr uint32_t REMOTE_LORA_CFG_READY_MS = 10000UL;
 
 static void putBE16(uint8_t *p, uint16_t v) {
   p[0] = static_cast<uint8_t>(v >> 8);
@@ -257,6 +281,10 @@ bool scanNetwork() {
   Serial.println("/24 for TCP 6668");
   IPAddress base = apIP;
   for (int host = 2; host < 255; ++host) {
+    // A full /24 TCP scan can take over a minute. Keep the LoRa link serviced
+    // so coordinated configuration and DP requests are not blocked by discovery.
+    serviceLora();
+    serviceRemoteLoraConfig();
     if (host == base[3]) continue;
     IPAddress ip(base[0], base[1], base[2], host);
     if (tcpProbe(ip, settings.tuyaPort, settings.scanProbeTimeoutMs)) {
@@ -495,9 +523,9 @@ void initLora() {
                 settings.loraSyncWord);
 }
 
-void sendLoraFrame(uint8_t type, const uint8_t *payload, size_t payloadLen,
+bool sendLoraFrame(uint8_t type, const uint8_t *payload, size_t payloadLen,
                    bool listen = true) {
-  if (!loraReady || !lora.hasKey()) return;
+  if (!loraReady || !lora.hasKey()) return false;
 
   uint8_t frame[tuya_lora::LORA_MAX_FRAME];
   size_t frameLen = 0;
@@ -506,7 +534,7 @@ void sendLoraFrame(uint8_t type, const uint8_t *payload, size_t payloadLen,
   if (!lora.encode(type, 0, seq, payload, payloadLen,
                    tuya_lora::DIR_REMOTE_TO_BASE, frame, sizeof(frame), frameLen)) {
     Serial.println("[lora] encode failed");
-    return;
+    return false;
   }
 
   LoRa.beginPacket();
@@ -521,12 +549,13 @@ void sendLoraFrame(uint8_t type, const uint8_t *payload, size_t payloadLen,
   } else {
     Serial.println("[lora] tx failed");
   }
+  return ok;
 }
 
 void sendLoraHello() {
   tuya_lora::HelloData hello;
   hello.role = 1;  // remote node
-  hello.fwVersion = 1;
+  hello.fwVersion = 2;
   hello.bootId = lora.bootId();
 
   uint8_t payload[8];
@@ -667,6 +696,285 @@ void sendLoraAck(uint32_t ackedSeq, uint8_t result, uint16_t detail = 0) {
   sendLoraFrame(tuya_lora::MSG_ACK, payload, n);
 }
 
+// ---------------------------------------------------------------------------
+// Coordinated LoRa link configuration
+// ---------------------------------------------------------------------------
+void remoteLoraConfigFromSettings(const RemoteSettings &s, LoraConfig &out) {
+  out.frequencyMhz = s.loraFrequencyMhz;
+  out.syncWord = s.loraSyncWord;
+  out.txPower = s.loraTxPower;
+  out.sf = s.loraSf;
+  out.bandwidthHz = s.loraBandwidthHz;
+  out.codingRate = s.loraCodingRate;
+  out.preamble = s.loraPreamble;
+  strncpy(out.psk, s.loraPsk, sizeof(out.psk) - 1);
+  out.psk[sizeof(out.psk) - 1] = '\0';
+}
+
+void remoteLoraConfigToSettings(const LoraConfig &in, RemoteSettings &s) {
+  s.loraFrequencyMhz = in.frequencyMhz;
+  s.loraSyncWord = in.syncWord;
+  s.loraTxPower = in.txPower;
+  s.loraSf = in.sf;
+  s.loraBandwidthHz = in.bandwidthHz;
+  s.loraCodingRate = in.codingRate;
+  s.loraPreamble = in.preamble;
+  strncpy(s.loraPsk, in.psk, sizeof(s.loraPsk) - 1);
+  s.loraPsk[sizeof(s.loraPsk) - 1] = '\0';
+}
+
+bool remoteLoraConfigEquals(const LoraConfig &a, const LoraConfig &b) {
+  return fabsf(a.frequencyMhz - b.frequencyMhz) < 0.0005f &&
+         a.syncWord == b.syncWord && a.txPower == b.txPower &&
+         a.sf == b.sf && a.bandwidthHz == b.bandwidthHz &&
+         a.codingRate == b.codingRate && a.preamble == b.preamble &&
+         strcmp(a.psk, b.psk) == 0;
+}
+
+bool validateRemoteLoraConfig(const LoraConfig &c, String &error) {
+  if (!isValidPsk(c.psk)) {
+    error = "PSK must be 32 hex characters";
+    return false;
+  }
+  if (c.frequencyMhz < 137.0f || c.frequencyMhz > 1020.0f ||
+      c.sf < 6 || c.sf > 12 || c.bandwidthHz < 7800 ||
+      c.bandwidthHz > 500000 || c.codingRate < 5 || c.codingRate > 8 ||
+      c.preamble < 6 || c.txPower < -1 || c.txPower > 20) {
+    error = "LoRa PHY values out of range";
+    return false;
+  }
+  return true;
+}
+
+bool remoteLoraConfigBusy() {
+  return remoteLoraCfgPhase == REMOTE_LORA_CFG_APPLYING ||
+         remoteLoraCfgPhase == REMOTE_LORA_CFG_PENDING;
+}
+
+const char *remoteLoraConfigPhaseName() {
+  switch (remoteLoraCfgPhase) {
+    case REMOTE_LORA_CFG_APPLYING: return "applying";
+    case REMOTE_LORA_CFG_PENDING: return "pending";
+    case REMOTE_LORA_CFG_COMMITTED: return "committed";
+    case REMOTE_LORA_CFG_ERROR: return "error";
+    default: return "idle";
+  }
+}
+
+String remoteLoraConfigStatusJson() {
+  JsonDocument doc;
+  doc["state"] = remoteLoraConfigPhaseName();
+  doc["busy"] = remoteLoraConfigBusy();
+  doc["config_id"] = remoteLoraCfgId;
+  if (remoteLoraCfgPhase == REMOTE_LORA_CFG_PENDING) {
+    const uint32_t now = millis();
+    doc["remaining_ms"] =
+        static_cast<int32_t>(remoteLoraCfgDeadlineMs - now);
+    doc["last_contact_age_ms"] = remoteLoraCfgLastContactMs
+                                     ? static_cast<int32_t>(
+                                           now - remoteLoraCfgLastContactMs)
+                                     : -1;
+  } else {
+    doc["remaining_ms"] = 0;
+    doc["last_contact_age_ms"] = -1;
+  }
+  if (remoteLoraCfgError[0]) doc["error"] = remoteLoraCfgError;
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
+bool applyRemoteLoraRuntime() {
+  loraReady = false;
+  LoRa.end();
+  initLora();
+  if (!loraReady) return false;
+  if (!lora.setKeyHex(settings.loraPsk)) return false;
+  dpSending = false;
+  dpChunkCount = 0;
+  dpAckDeadline = 0;
+  loraHelloDone = false;
+  lastLoraHelloMs = 0;
+  return true;
+}
+
+void revertRemoteLoraConfig(const char *reason) {
+  snprintf(remoteLoraCfgError, sizeof(remoteLoraCfgError), "%s", reason);
+  Serial.printf("[lora-cfg] revert: %s\n", remoteLoraCfgError);
+  RemoteSettings old = settings;
+  remoteLoraConfigToSettings(remoteLoraCfgTrial.oldConfig, old);
+  settings = old;
+  saveSettings();
+  if (!applyRemoteLoraRuntime()) {
+    Serial.println("[lora-cfg] old config reinit failed; restarting");
+    delay(100);
+    ESP.restart();
+  }
+  loraTrialClear();
+  remoteLoraCfgTrial = LoraTrial{};
+  remoteLoraCfgPhase = REMOTE_LORA_CFG_ERROR;
+}
+
+void sendRemoteConfigAck(uint32_t id, uint8_t result, uint16_t detail = 0) {
+  uint8_t payload[8];
+  ConfigAckData ack;
+  ack.result = result;
+  ack.detail = detail;
+  const size_t n = encodeConfigAck(id, ack, payload, sizeof(payload));
+  if (n > 0) sendLoraFrame(MSG_CONFIG_ACK, payload, n);
+}
+
+void sendRemoteConfigCommitAck(uint32_t id) {
+  uint8_t payload[8];
+  ConfigAckData ack;
+  ack.result = ACK_OK;
+  ack.detail = 0;
+  const size_t n = encodeConfigAck(id, ack, payload, sizeof(payload));
+  if (n > 0) sendLoraFrame(MSG_CONFIG_COMMIT_ACK, payload, n);
+}
+
+void sendRemoteConfigId(uint8_t type, uint32_t id) {
+  uint8_t payload[5];
+  const size_t n = encodeConfigId(id, payload, sizeof(payload));
+  if (n > 0) sendLoraFrame(type, payload, n);
+}
+
+void handleRemoteConfigSet(const uint8_t *payload, size_t len) {
+  uint32_t id = 0;
+  LoraConfig config;
+  if (!decodeConfigSet(payload, len, id, config)) return;
+
+  if (remoteLoraConfigBusy()) {
+    // Retransmitted SET before the base saw the ACK: acknowledge it again.
+    if (id == remoteLoraCfgId) {
+      sendRemoteConfigAck(id, ACK_OK);
+    } else {
+      sendRemoteConfigAck(id, ACK_BUSY);
+    }
+    return;
+  }
+
+  String error;
+  if (!validateRemoteLoraConfig(config, error)) {
+    Serial.printf("[lora-cfg] rejected: %s\n", error.c_str());
+    sendRemoteConfigAck(id, ACK_INVALID);
+    return;
+  }
+
+  LoraTrial trial;
+  trial.active = true;
+  trial.applied = true;
+  trial.configId = id;
+  remoteLoraConfigFromSettings(settings, trial.oldConfig);
+  trial.newConfig = config;
+  if (!loraTrialSave(trial)) {
+    sendRemoteConfigAck(id, ACK_REJECTED, 2);
+    return;
+  }
+
+  RemoteSettings next = settings;
+  remoteLoraConfigToSettings(config, next);
+  const RemoteSettings old = settings;
+  settings = next;
+  if (!saveSettings()) {
+    settings = old;
+    loraTrialClear();
+    sendRemoteConfigAck(id, ACK_REJECTED, 3);
+    return;
+  }
+
+  // ACK must go out on the old PHY/PSK before the radio is reinitialized.
+  // Repeat it so a busy base receiver or a retry collision does not lose the
+  // only acknowledgement.
+  for (uint8_t attempt = 0; attempt < 3; ++attempt) {
+    sendRemoteConfigAck(id, ACK_OK);
+    delay(120);
+  }
+  delay(250);
+
+  remoteLoraCfgTrial = trial;
+  remoteLoraCfgId = id;
+  remoteLoraCfgPhase = REMOTE_LORA_CFG_APPLYING;
+  remoteLoraCfgError[0] = '\0';
+  if (!applyRemoteLoraRuntime()) {
+    settings = old;
+    saveSettings();
+    if (!applyRemoteLoraRuntime()) {
+      Serial.println("[lora-cfg] old config reinit failed; restarting");
+      delay(100);
+      ESP.restart();
+    }
+    loraTrialClear();
+    remoteLoraCfgTrial = LoraTrial{};
+    remoteLoraCfgPhase = REMOTE_LORA_CFG_ERROR;
+    snprintf(remoteLoraCfgError, sizeof(remoteLoraCfgError),
+             "new LoRa radio configuration failed");
+    Serial.println("[lora-cfg] apply failed; old config restored");
+    return;
+  }
+
+  remoteLoraCfgPhase = REMOTE_LORA_CFG_PENDING;
+  remoteLoraCfgDeadlineMs = millis() + REMOTE_LORA_CFG_TIMEOUT_MS;
+  remoteLoraCfgLastContactMs = millis();
+  remoteLoraCfgNextReadyMs = millis() + 300;
+  Serial.printf("[lora-cfg] applied id=%lu; waiting for COMMIT\n",
+                (unsigned long)remoteLoraCfgId);
+}
+
+void handleRemoteConfigCommit(const uint8_t *payload, size_t len) {
+  uint32_t id = 0;
+  if (!decodeConfigId(payload, len, id)) return;
+  if (remoteLoraCfgPhase == REMOTE_LORA_CFG_APPLYING) return;
+
+  if (remoteLoraCfgPhase == REMOTE_LORA_CFG_PENDING ||
+      remoteLoraCfgPhase == REMOTE_LORA_CFG_COMMITTED ||
+      remoteLoraCfgPhase == REMOTE_LORA_CFG_IDLE) {
+    loraTrialClear();
+    remoteLoraCfgTrial = LoraTrial{};
+    remoteLoraCfgPhase = REMOTE_LORA_CFG_COMMITTED;
+    remoteLoraCfgError[0] = '\0';
+    sendRemoteConfigCommitAck(id);
+    Serial.printf("[lora-cfg] committed id=%lu\n", (unsigned long)id);
+  }
+}
+
+void handleRemoteConfigProbe(const uint8_t *payload, size_t len) {
+  uint32_t id = 0;
+  if (!decodeConfigId(payload, len, id)) return;
+  if (remoteLoraCfgPhase == REMOTE_LORA_CFG_PENDING && id == remoteLoraCfgId) {
+    remoteLoraCfgLastContactMs = millis();
+  }
+  sendRemoteConfigId(MSG_CONFIG_PROBE_ACK, id);
+}
+
+void serviceRemoteLoraConfig() {
+  if (remoteLoraCfgPhase != REMOTE_LORA_CFG_PENDING) return;
+  const uint32_t now = millis();
+  if (static_cast<int32_t>(now - remoteLoraCfgDeadlineMs) >= 0) {
+    revertRemoteLoraConfig("base did not confirm the new LoRa link");
+    return;
+  }
+  if (static_cast<int32_t>(now - remoteLoraCfgNextReadyMs) >= 0) {
+    sendRemoteConfigId(MSG_CONFIG_READY, remoteLoraCfgId);
+    remoteLoraCfgNextReadyMs = now + REMOTE_LORA_CFG_READY_MS;
+  }
+}
+
+void initRemoteLoraConfigOnBoot() {
+  LoraTrial trial;
+  if (!loraTrialLoad(trial) || !trial.active) return;
+  remoteLoraConfigToSettings(trial.newConfig, settings);
+  saveSettings();
+  remoteLoraCfgTrial = trial;
+  remoteLoraCfgId = trial.configId;
+  remoteLoraCfgPhase = REMOTE_LORA_CFG_PENDING;
+  remoteLoraCfgDeadlineMs = millis() + REMOTE_LORA_CFG_TIMEOUT_MS;
+  remoteLoraCfgLastContactMs = millis();
+  remoteLoraCfgNextReadyMs = millis() + 1000;
+  Serial.printf("[lora-cfg] resumed trial id=%lu\n",
+                (unsigned long)remoteLoraCfgId);
+}
+
 void sendLoraLog(const String &text) {
   String msg = text;
   if (msg.length() > tuya_lora::LORA_MAX_PAYLOAD) {
@@ -749,6 +1057,9 @@ void pollLoraCommands() {
                   (unsigned long)bootId, (unsigned long)seq);
     return;
   }
+  if (remoteLoraCfgPhase == REMOTE_LORA_CFG_PENDING) {
+    remoteLoraCfgLastContactMs = millis();
+  }
 
   Serial.printf("[lora] rx base type=0x%02X seq=%lu len=%u\n", type,
                 (unsigned long)seq, (unsigned)payloadLen);
@@ -763,6 +1074,15 @@ void pollLoraCommands() {
     case tuya_lora::MSG_DP_SET:
       handleDpSet(seq, payload, payloadLen);
       break;
+    case tuya_lora::MSG_CONFIG_SET:
+      handleRemoteConfigSet(payload, payloadLen);
+      break;
+    case tuya_lora::MSG_CONFIG_COMMIT:
+      handleRemoteConfigCommit(payload, payloadLen);
+      break;
+    case tuya_lora::MSG_CONFIG_PROBE:
+      handleRemoteConfigProbe(payload, payloadLen);
+      break;
     default:
       Serial.printf("[lora] unhandled base type=0x%02X\n", type);
       break;
@@ -772,9 +1092,11 @@ void pollLoraCommands() {
 void serviceLora() {
   if (!loraReady) return;
 
-  if (!loraHelloDone) {
+  const uint32_t nowHello = millis();
+  if (!loraHelloDone || nowHello - lastLoraHelloMs >= 60000UL) {
     sendLoraHello();
     loraHelloDone = true;
+    lastLoraHelloMs = nowHello;
   }
 
   pollLoraCommands();
@@ -813,6 +1135,7 @@ void setup() {
   }
 
   tuya_lora::loadSettings();
+  initRemoteLoraConfigOnBoot();
   tuya_lora::maybeSdFirmwareUpdate(tuya_lora::settings.sdFirmwareFile,
                                 drawSdUpdate);
   tuya_lora::bootGuardOnBoot();
@@ -868,7 +1191,12 @@ void loop() {
 
   if (!deviceFound) {
     if (!findDeviceOnStations()) {
-      if (millis() - lastScanMs > settings.scanIntervalMs) {
+      // A full subnet scan is pointless with no AP clients and can block the
+      // loop for a minute. Wait for the device to join the AP first.
+      if (stationCount == 0) {
+        scanText = "waiting for AP client";
+        lastScanMs = millis();
+      } else if (millis() - lastScanMs > settings.scanIntervalMs) {
         lastScanMs = millis();
         scanText = "full scan";
         if (scanNetwork()) {
@@ -883,6 +1211,7 @@ void loop() {
 
   serviceTuya();
   serviceLora();
+  serviceRemoteLoraConfig();
 
   if (!webUiSetupApActive() && displayReady && !displayAsleep &&
       millis() >= settings.displayOnMs) {

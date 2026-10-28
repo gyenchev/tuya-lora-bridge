@@ -16,7 +16,7 @@ descriptor without changing the firmware. Built-in Feyree and F-OBZ2 profiles
 are provided as compatibility examples and can be replaced by custom
 descriptors.
 
-- **Firmware version:** 0.3.0
+- **Firmware version:** 0.4.0
 - **Radio band:** 868 MHz (EU)
 - **LoRa link:** AES-128-GCM authenticated and encrypted
 - **Home Assistant:** MQTT discovery, no custom integration
@@ -73,6 +73,12 @@ The Tuya device stays on its own local protections and schedules.
 - Base-local LoRa transfer telemetry in the **LoRa** tab: per-frame and burst
   speeds, wire/payload byte counts, DP snapshot speed, message mix and a rolling
   60-minute duty-cycle view. It is not published to MQTT or Home Assistant.
+- Coordinated LoRa link configuration from the base: frequency, SF, bandwidth,
+  coding rate, preamble, sync word, TX power and PSK are applied to both nodes
+  live, committed after a new-link handshake, and rolled back after five minutes
+  without communication.
+- LoRa frequency presets for the EU 868-870 MHz bands, generated PSK support,
+  and a duty-cycle calculator in the base LoRa tab.
 - Streaming profile-pack storage (metadata + one small file per discovery
   entity) in a 384 KB LittleFS partition; no single-JSON pack memory ceiling.
 - Web UI for all runtime settings; settings are stored in ESP32 NVS.
@@ -193,8 +199,9 @@ When a node has no saved configuration, it starts a setup AP:
 | Base | `TuyaLoraBase-Setup` | `tuya-lora-setup` | `http://192.168.4.1/` |
 | Remote | `TuyaLoraRemote-Setup` | `tuya-lora-setup` | `http://192.168.4.1/` |
 
-The default setup password is public. Change it in the **System** tab after the
-first successful configuration.
+The default setup password and the default all-zero LoRa PSK are public. Change
+the setup password in the **System** tab and generate a new PSK from the base
+**LoRa** tab before deployment.
 
 ### 2. Configure the remote node
 
@@ -204,7 +211,7 @@ Open `http://192.168.4.1/settings` and enter:
 
 - the AP SSID, password and channel that the Tuya device expects;
 - the Tuya device ID, 16-character local key and protocol version;
-- the LoRa frequency, sync word and a random 16-byte PSK;
+- the LoRa frequency and sync word; leave the PSK at the all-zero default for first contact, or enter the same key as the base;
 - optional timing and discovery values.
 
 The remote node stores these values in NVS. No compile-time secrets are used.
@@ -226,7 +233,7 @@ Connect to the base node's `TuyaLoraBase-Setup` AP (default password
 
 - home WiFi credentials;
 - MQTT broker host, port and credentials;
-- the same LoRa PSK and radio settings as the remote node;
+- LoRa link settings. Use the base **LoRa** tab to generate a random PSK and apply the full radio configuration to both nodes;
 - Home Assistant device name and discovery prefix;
 - the **Profile** tab: open the profile editor, choose a device from the online
   tuya-local catalog, fine-tune its JSON, and save it to the base;

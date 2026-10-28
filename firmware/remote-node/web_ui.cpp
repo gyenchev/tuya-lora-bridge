@@ -14,6 +14,8 @@
 // Defined in remote-node.ino (global namespace).
 extern TuyaClient tuya;
 extern bool deviceFound;
+extern bool remoteLoraConfigBusy();
+extern String remoteLoraConfigStatusJson();
 extern IPAddress deviceIP;
 extern bool everConnected;
 
@@ -126,10 +128,13 @@ const char DEVICE_HTML[] PROGMEM = R"HTML(<!doctype html>
 
     <section class="tab-panel" id="tab-lora" data-tab-panel="lora" role="tabpanel">
       <h2>LoRa link</h2>
+      <p class="hint">The base normally coordinates LoRa changes across both nodes. Editing these fields locally can break the link; use the base LoRa tab for normal changes.</p>
       <label for="lora_psk">Pre-shared key <span class="def">required</span></label>
       <input id="lora_psk" name="lora_psk" type="password" maxlength="32" pattern="[0-9A-Fa-f]{32}" autocomplete="new-password" placeholder="{{PSK_PLACEHOLDER}}">
-      <p class="hint">32 hex characters. Must be identical on the base and remote nodes.</p>
+      <button type="button" id="generate-psk">Generate new PSK</button>
+      <p class="hint">32 hex characters. Must match the base. A new key generated here is only local until the base is also updated.</p>
       {{FIELDS_LORA}}
+      <div class="status" id="lora-config-status">LoRa config: idle</div>
     </section>
 
     <section class="tab-panel" id="tab-discovery" data-tab-panel="discovery" role="tabpanel">
@@ -190,6 +195,42 @@ if (form) {
     if (panel) activateTab(panel.dataset.tabPanel);
   }, true);
 }
+
+const generatePsk = document.getElementById('generate-psk');
+if (generatePsk) {
+  generatePsk.addEventListener('click', async () => {
+    try {
+      const response = await fetch('/api/lora/psk', {method: 'POST', cache: 'no-store'});
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const data = await response.json();
+      document.getElementById('lora_psk').value = data.psk;
+      generatePsk.textContent = 'Generated - save locally';
+    } catch (error) {
+      generatePsk.textContent = 'Generation failed';
+    }
+  });
+}
+
+async function refreshLoraConfig() {
+  const box = document.getElementById('lora-config-status');
+  if (!box) return;
+  try {
+    const response = await fetch('/api/status', {cache: 'no-store'});
+    if (!response.ok) return;
+    const data = await response.json();
+    const cfg = data.lora_config;
+    if (!cfg) { box.textContent = 'LoRa config: unavailable'; return; }
+    let text = 'LoRa config: ' + cfg.state;
+    if (cfg.error) text += ' - ' + cfg.error;
+    if (cfg.remaining_ms > 0) text += ' - ' + Math.ceil(cfg.remaining_ms / 1000) + ' s remaining';
+    if (cfg.last_contact_age_ms >= 0) text += ' - last contact ' + Math.ceil(cfg.last_contact_age_ms / 1000) + ' s ago';
+    box.textContent = text;
+  } catch (error) {
+    box.textContent = 'LoRa config: status unavailable';
+  }
+}
+setInterval(refreshLoraConfig, 2000);
+refreshLoraConfig();
 </script>
 </body>
 </html>)HTML";
@@ -282,7 +323,7 @@ async function refresh() {
     set('ap', d.ap_ssid + ' at ' + d.ap_ip + ' (' + d.ap_clients + ' clients)' + (d.setup_ap ? ' - setup mode' : ''));
     set('device', d.device_found ? 'found at ' + d.device_ip : 'searching on the AP');
     set('tuya', tuyaText(d));
-    set('psk', d.psk_set ? 'set' : 'not set');
+    set('psk', d.psk_default_zero ? 'default zero (insecure)' : (d.psk_set ? 'set' : 'not set'));
     set('card-device', d.device_found ? 'online' : 'not found');
     set('card-clients', d.ap_clients);
     set('card-tuya', d.tuya_connected ? 'connected' : (d.tuya_configured ? 'waiting' : 'not configured'));
@@ -789,11 +830,21 @@ String tuyaStatusText() {
   return "not configured";
 }
 
+bool pskDefaultZero(const char *psk) {
+  return psk && strcmp(psk, "00000000000000000000000000000000") == 0;
+}
+
 String pskStatusText(const RemoteSettings &s) {
+  if (pskDefaultZero(s.loraPsk)) return "default zero (insecure)";
   return isValidPsk(s.loraPsk) ? "set" : "not set";
 }
 
 String pskWarningText(const RemoteSettings &s) {
+  if (pskDefaultZero(s.loraPsk)) {
+    return "<div class=\"warn\">The LoRa PSK is the all-zero default. The link "
+           "works for initial setup, but anyone with this firmware can decrypt "
+           "it. Generate a new key before deployment.</div>";
+  }
   if (isValidPsk(s.loraPsk)) return "";
   return "<div class=\"warn\">LoRa PSK is not set. The remote node cannot "
          "talk to the base until both nodes have the same 32-character hex "
@@ -845,6 +896,7 @@ String keyPlaceholder(const RemoteSettings &s) {
 }
 
 String pskPlaceholder(const RemoteSettings &s) {
+  if (pskDefaultZero(s.loraPsk)) return "generate a key or enter 32 hex characters";
   return isValidPsk(s.loraPsk) ? "leave blank to keep current"
                                : "32 hex characters";
 }
@@ -949,6 +1001,10 @@ void handleApiStatus() {
   json += String(tuya.queryCount());
   json += ",\"psk_set\":";
   json += (isValidPsk(settings.loraPsk) ? "true" : "false");
+  json += ",\"psk_default_zero\":";
+  json += (strcmp(settings.loraPsk, "00000000000000000000000000000000") == 0
+               ? "true"
+               : "false");
   json += ",\"last_error\":\"";
   json += jsonEscape(tuya.lastError().c_str());
   json += "\",\"last_json\":\"";
@@ -962,7 +1018,9 @@ void handleApiStatus() {
     json += jsonEscape(tuya.dps()[i].value.c_str());
     json += "\"}";
   }
-  json += "]}";
+  json += "],\"lora_config\":";
+  json += remoteLoraConfigStatusJson();
+  json += "}";
   server->sendHeader("Cache-Control", "no-store");
   server->send(200, "application/json", json);
 }
@@ -1077,6 +1135,10 @@ bool validate(const RemoteSettings &s, String &error, String &tab) {
 }
 
 void handleSave() {
+  if (remoteLoraConfigBusy()) {
+    renderForm(settings, "A coordinated LoRa configuration change is in progress. Wait for it to finish before saving.", 409, "lora");
+    return;
+  }
   if (!server->hasArg("ap_ssid")) {
     server->send(400, "text/plain", "Bad request");
     return;
@@ -1135,6 +1197,20 @@ void handleSave() {
   rebootAtMs = millis() + 1500;
 }
 
+void handleGeneratePsk() {
+  char psk[33];
+  do {
+    for (uint8_t i = 0; i < 16; ++i) {
+      snprintf(psk + i * 2, 3, "%02x", esp_random() & 0xFF);
+    }
+  } while (strcmp(psk, "00000000000000000000000000000000") == 0);
+  String json = "{\"psk\":\"";
+  json += psk;
+  json += "\"}";
+  server->sendHeader("Cache-Control", "no-store");
+  server->send(200, "application/json", json);
+}
+
 void handleFactory() {
   bootGuardClear();
   clearSettings();
@@ -1189,6 +1265,7 @@ void webUiBegin() {
   server->on("/settings", HTTP_GET, handleSettings);
   server->on("/api/status", HTTP_GET, handleApiStatus);
   server->on("/save", HTTP_POST, handleSave);
+  server->on("/api/lora/psk", HTTP_POST, handleGeneratePsk);
   server->on("/factory", HTTP_POST, handleFactory);
   server->onNotFound(handleNotFound);
   server->begin();

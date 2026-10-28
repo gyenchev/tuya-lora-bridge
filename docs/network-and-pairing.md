@@ -149,6 +149,9 @@ A static device IP can skip discovery entirely. Set it in the remote node's
   through it.
 - Keep the Tuya local key and LoRa PSK in NVS and enter them through the web UI.
   Never commit them or print them in logs.
+- The initial LoRa PSK is all zeroes so a fresh base/remote pair can connect.
+  Generate a random PSK in the base **LoRa** tab and apply it to both nodes
+  before deployment; the zero key is not secure.
 - The configuration web UI and status page are unauthenticated. Access is
   limited to the WPA2 AP. Change the default setup AP password after first
   configuration.

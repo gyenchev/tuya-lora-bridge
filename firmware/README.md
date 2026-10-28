@@ -134,7 +134,7 @@ the nodes on trusted networks.
 |---|---|
 | WiFi | Home WiFi SSID/password and network scan |
 | MQTT | Broker host, port, username, password, keepalive, socket timeout and buffer size. Use at least 8192 bytes for browser packs; larger discovery configs are single MQTT messages. |
-| LoRa | PSK (32 hex characters), frequency, sync word, TX power, spreading factor, bandwidth, coding rate and preamble |
+| LoRa | Coordinated link settings: frequency presets/custom, bandwidth, SF, coding rate, TX power, preamble, sync word and PSK. **Generate new PSK** and **Apply LoRa settings to both nodes** stage the change; the base and remote reinitialize live and commit after the new-link handshake. |
 | Home Assistant | Device name, timezone, discovery prefix and stable device identifier |
 | Timing | Offline timeout, snapshot/chunk timeouts, retry intervals, WiFi/MQTT reconnect intervals and display timings |
 | Control | Command enable. Command DPs and value ranges come from the active profile. |
@@ -201,7 +201,11 @@ The threshold and healthy-uptime window are compile-time values in `config.h`:
 6. Shows AP, device, Tuya and LoRa status on the OLED and serial log.
 7. Turns the OLED panel off 10 minutes after boot to reduce burn-in. The panel
    stays on while the setup AP is active.
-8. Sends `HELLO` once after boot. The base initiates every DP snapshot.
+8. Sends `HELLO` after boot and every 60 seconds so the base can track its
+   capability version. The base initiates every DP snapshot.
+9. Skips the full 192.168.4.0/24 TCP scan while no station is connected to the
+   AP. When a client is present, the scan services the LoRa link between hosts
+   so coordinated configuration is not blocked by discovery.
 
 The remote node does not know which DP means voltage, current or charging. That
 mapping lives on the base node and can be changed without reflashing the remote.
@@ -236,6 +240,14 @@ DPs. The **LoRa** page shows per-frame/burst speeds, byte counts, DP snapshot
 speed, message mix and the rolling 60-minute duty cycle. The OLED shows device
 readiness (`available`/`unknown`) and the active profile name instead of
 charger-only status/power rows.
+
+The base **LoRa** tab is the authoritative place for radio configuration. It
+offers EU 868-870 MHz presets, dropdowns, a custom frequency field, a generated
+PSK, and a live duty-cycle estimate. A change is sent to the remote first; both
+nodes keep the previous settings in NVS until the new link is proven. If no
+communication is established within five minutes, both restore the old settings.
+Factory reset sets both nodes back to the all-zero default PSK; generate a new
+key before deployment.
 
 The base node is normally a WiFi station. It creates an AP only for initial
 configuration or when the configured WiFi is unreachable.

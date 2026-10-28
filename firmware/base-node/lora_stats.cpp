@@ -210,6 +210,41 @@ void LoraStats::noteDpComplete(bool ok, uint32_t nowMs) {
   }
 }
 
+bool dutyLimitForFrequency(float mhz, float &limitPercent) {
+  // EU/CEPT non-specific SRD reference limits. The alarm sub-bands are included
+  // because the user can select custom frequencies in the gaps.
+  if (mhz >= 868.0f && mhz <= 868.7f) {
+    limitPercent = 1.0f;
+    return true;
+  }
+  if (mhz >= 868.7f && mhz <= 869.2f) {
+    limitPercent = 0.1f;
+    return true;
+  }
+  if (mhz >= 869.25f && mhz <= 869.3f) {
+    limitPercent = 0.1f;
+    return true;
+  }
+  if (mhz >= 869.3f && mhz <= 869.4f) {
+    limitPercent = 1.0f;
+    return true;
+  }
+  if (mhz >= 869.4f && mhz <= 869.7f) {
+    limitPercent = 10.0f;
+    return true;
+  }
+  if (mhz >= 869.7f && mhz <= 870.0f) {
+    limitPercent = 1.0f;
+    return true;
+  }
+  if (mhz >= 433.05f && mhz <= 434.79f) {
+    limitPercent = 10.0f;
+    return true;
+  }
+  limitPercent = 1.0f;
+  return false;
+}
+
 void LoraStats::toJson(JsonObject out, uint32_t nowMs) const {
   const uint32_t elapsedMs =
       _started && nowMs >= _startedMs ? (nowMs - _startedMs) : 1;
@@ -258,7 +293,9 @@ void LoraStats::toJson(JsonObject out, uint32_t nowMs) const {
     dutyRxMs += bucket.rxAirtimeMs;
     dutyTxMs += bucket.txAirtimeMs;
   }
-  const float dutyLimitPercent = 1.0f;  // EU 868.0-868.6 MHz reference
+  float dutyLimitPercent = 1.0f;
+  const bool dutyLimitKnown =
+      dutyLimitForFrequency(_frequencyMhz, dutyLimitPercent);
   const float dutyRxPercent = dutyRxMs * 100.0f / dutyWindowMs;
   const float dutyTxPercent = dutyTxMs * 100.0f / dutyWindowMs;
   const float dutyTotalPercent =
@@ -276,6 +313,15 @@ void LoraStats::toJson(JsonObject out, uint32_t nowMs) const {
   duty["rx_percent"] = dutyRxPercent;
   duty["tx_percent"] = dutyTxPercent;
   duty["total_percent"] = dutyTotalPercent;
+  duty["limit_known"] = dutyLimitKnown;
+  duty["observed_percent"] =
+      (_rxAirtimeMs + _txAirtimeMs) / static_cast<float>(uptimeMs) * 100.0f;
+  duty["observed_rx_percent"] =
+      _rxAirtimeMs / static_cast<float>(uptimeMs) * 100.0f;
+  duty["observed_tx_percent"] =
+      _txAirtimeMs / static_cast<float>(uptimeMs) * 100.0f;
+  duty["observed_budget_ms"] =
+      uptimeMs * dutyLimitPercent / 100.0f;
   duty["budget_ms"] = dutyBudgetMs;
   duty["rx_remaining_ms"] =
       dutyRxMs < dutyBudgetMs ? dutyBudgetMs - dutyRxMs : 0.0f;

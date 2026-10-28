@@ -114,8 +114,9 @@ The firmware and Home Assistant configuration must preserve these rules:
 - **868 MHz EU:** the 868.0–868.6 MHz band has a 1% duty-cycle limit. Keep the
   snapshot interval at 60 seconds or slower and verify the airtime budget in
   [`lora-protocol.md`](lora-protocol.md). The base **LoRa** tab shows the rolling
-  60-minute TX duty for the base, the observed remote TX duty and the remaining
-  budget against the 1% reference; use it when changing the snapshot interval,
+  60-minute TX duty for the base, the observed remote TX duty, the remaining
+  budget against the 1% reference, and a dynamic duty calculator for the
+  selected 868-870 MHz sub-band. Use it when changing the frequency, bandwidth,
   spreading factor or retry settings.
 - **ERP:** 14 dBm conducted is 25 mW. With a 2 dBi antenna, EIRP is 16 dBm and
   ERP is about 14 dBm (25 mW). Verify your antenna gain; a higher-gain antenna
@@ -131,7 +132,10 @@ The firmware and Home Assistant configuration must preserve these rules:
 - Use a strong, unique WPA2 password for the device AP.
 - Restrict the AP to the device's MAC address if the firmware is extended to
   support it.
-- Use a random 16-byte LoRa PSK. Do not reuse a WiFi or MQTT password.
+- Both nodes default to the all-zero LoRa PSK so a fresh pair can establish the
+  first link. Use **Generate new PSK** in the base LoRa tab and apply it to both
+  nodes before deployment. Do not leave the zero key active. Do not reuse a WiFi
+  or MQTT password.
 - Use a dedicated MQTT user scoped to the bridge topics.
 - Do not expose MQTT or Home Assistant to the internet without TLS/VPN.
 - Keep the Tuya local key and LoRa PSK out of Git and serial logs. They live in

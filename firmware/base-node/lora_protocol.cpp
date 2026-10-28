@@ -82,6 +82,79 @@ size_t encodeAck(const AckData &in, uint8_t *out, size_t maxLen) {
   return 7;
 }
 
+bool decodeConfigSet(const uint8_t *payload, size_t len, uint32_t &configId,
+                     LoraConfig &out) {
+  if (!payload || len < 51 || payload[0] != CONFIG_PROTOCOL_VERSION) {
+    return false;
+  }
+  configId = get32(payload + 1);
+  out.frequencyMhz = get32(payload + 5) / 1000000.0f;
+  out.bandwidthHz = get32(payload + 9);
+  out.sf = payload[13];
+  out.codingRate = payload[14];
+  out.preamble = get16(payload + 15);
+  out.syncWord = payload[17];
+  out.txPower = static_cast<int8_t>(payload[18]);
+  memcpy(out.psk, payload + 19, 32);
+  out.psk[32] = '\0';
+  return true;
+}
+
+size_t encodeConfigSet(uint32_t configId, const LoraConfig &in, uint8_t *out,
+                       size_t maxLen) {
+  if (!out || maxLen < 51) return 0;
+  out[0] = CONFIG_PROTOCOL_VERSION;
+  put32(out + 1, configId);
+  put32(out + 5,
+        static_cast<uint32_t>(in.frequencyMhz * 1000000.0f + 0.5f));
+  put32(out + 9, in.bandwidthHz);
+  out[13] = in.sf;
+  out[14] = in.codingRate;
+  put16(out + 15, in.preamble);
+  out[17] = in.syncWord;
+  out[18] = static_cast<uint8_t>(static_cast<int8_t>(in.txPower));
+  memset(out + 19, 0, 32);
+  const size_t pskLen = strlen(in.psk);
+  memcpy(out + 19, in.psk, pskLen < 32 ? pskLen : 32);
+  return 51;
+}
+
+bool decodeConfigAck(const uint8_t *payload, size_t len, uint32_t &configId,
+                     ConfigAckData &out) {
+  if (!payload || len < 8 || payload[0] != CONFIG_PROTOCOL_VERSION) {
+    return false;
+  }
+  configId = get32(payload + 1);
+  out.result = payload[5];
+  out.detail = get16(payload + 6);
+  return true;
+}
+
+size_t encodeConfigAck(uint32_t configId, const ConfigAckData &in, uint8_t *out,
+                       size_t maxLen) {
+  if (!out || maxLen < 8) return 0;
+  out[0] = CONFIG_PROTOCOL_VERSION;
+  put32(out + 1, configId);
+  out[5] = in.result;
+  put16(out + 6, in.detail);
+  return 8;
+}
+
+bool decodeConfigId(const uint8_t *payload, size_t len, uint32_t &configId) {
+  if (!payload || len < 5 || payload[0] != CONFIG_PROTOCOL_VERSION) {
+    return false;
+  }
+  configId = get32(payload + 1);
+  return true;
+}
+
+size_t encodeConfigId(uint32_t configId, uint8_t *out, size_t maxLen) {
+  if (!out || maxLen < 5) return 0;
+  out[0] = CONFIG_PROTOCOL_VERSION;
+  put32(out + 1, configId);
+  return 5;
+}
+
 bool LoraCodec::setKeyHex(const char *hex) {
   if (!hex || strlen(hex) != 32) {
     _hasKey = false;

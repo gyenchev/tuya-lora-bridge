@@ -32,6 +32,28 @@ connected to MQTT and Home Assistant.
   window and do not decay while idle.
 - [ ] The LoRa statistics are absent from the MQTT link/state/discovery payloads.
 
+### Coordinated LoRa configuration
+
+- [ ] The base LoRa tab offers frequency presets/custom, bandwidth, SF, coding
+  rate, TX power, preamble, sync word and PSK controls.
+- [ ] The duty panel updates for the selected band and warns when the occupied
+  bandwidth crosses a band edge.
+- [ ] **Generate new PSK** returns 32 hex characters and fills the field without
+  saving it.
+- [ ] Normal **Save and reboot** rejects LoRa-link changes with instructions to
+  use the coordinated apply action.
+- [ ] Apply sends `CONFIG_SET`; the remote replies `CONFIG_ACK` under the old
+  PHY/PSK; both nodes reinitialize live; `CONFIG_READY`/`CONFIG_COMMIT` complete
+  the commit.
+- [ ] A frequency-only change, a PSK-only change and a combined change all keep
+  the link working after commit.
+- [ ] A missing ACK leaves both nodes on the old settings.
+- [ ] A committed change survives a power cycle of both nodes.
+- [ ] With no communication after applying, both nodes restore the previous
+  PHY/PSK within five minutes.
+- [ ] The remote LoRa fields remain manually editable for bootstrap/recovery,
+  and local saves are blocked while a coordinated trial is active.
+
 ### MQTT and Home Assistant
 
 - [ ] The base publishes retained raw DP and availability topics.
