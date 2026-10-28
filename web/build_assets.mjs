@@ -1,76 +1,38 @@
 #!/usr/bin/env node
-// Generates catalog/profile assets derived from tuya-local (MIT).
-// See THIRD_PARTY_NOTICES.md.
-// Generate the online catalog and firmware assets.
+// Embeds the browser profile editor assets into the base firmware.
+//
+// The profile editor browses the tuya-local repository at runtime, so no
+// catalog is generated here.
 //
 // Usage:
-//   node web/build_assets.mjs --source /path/to/tuya-local/custom_components/tuya_local/devices
-//
-// Requires: npm install (in web/) and a tuya-local checkout.
+//   node web/build_assets.mjs [--firmware-out firmware/base-node]
 
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import yaml from "js-yaml";
-import {
-  buildPack,
-  classifyGroup,
-  displayName,
-  groupOrder,
-  slugify,
-  supportInfo,
-} from "./profile_converter.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_FIRMWARE_OUT = path.resolve(__dirname, "../firmware/base-node");
 
 function parseArgs(argv) {
   const args = {
-    source: "",
-    commit: "",
-    out: "web",
-    firmwareOut: "firmware/base-node",
+    firmwareOut: DEFAULT_FIRMWARE_OUT,
   };
   for (let i = 2; i < argv.length; i += 1) {
     const key = argv[i];
     const value = argv[i + 1];
-    if (key === "--source") { args.source = value; i += 1; }
-    else if (key === "--commit") { args.commit = value; i += 1; }
-    else if (key === "--out") { args.out = value; i += 1; }
-    else if (key === "--firmware-out") { args.firmwareOut = value; i += 1; }
-    else if (key === "--help" || key === "-h") {
-      console.log("Usage: node web/build_assets.mjs --source <tuya-local devices dir> [--commit SHA]");
+    if (key === "--firmware-out") {
+      args.firmwareOut = path.resolve(process.cwd(), value);
+      i += 1;
+    } else if (key === "--help" || key === "-h") {
+      console.log("Usage: node web/build_assets.mjs [--firmware-out firmware/base-node]");
       process.exit(0);
     } else {
       throw new Error(`unknown argument ${key}`);
     }
   }
-  if (!args.source) throw new Error("--source is required");
-  if (!fs.existsSync(args.source)) throw new Error(`source directory not found: ${args.source}`);
   return args;
-}
-
-function gitCommit(source) {
-  try {
-    return execFileSync("git", ["-C", source, "rev-parse", "HEAD"], {
-      encoding: "utf8",
-    }).trim();
-  } catch {
-    return "";
-  }
-}
-
-function uniqueId(base, used) {
-  let id = slugify(base);
-  let suffix = 2;
-  while (used.has(id) || ["auto", "fallback", "unknown"].includes(id)) {
-    const tail = `_${suffix}`;
-    id = `${slugify(base, 23 - tail.length).replace(/_+$/g, "")}${tail}`;
-    suffix += 1;
-  }
-  used.add(id);
-  return id;
 }
 
 function rawString(name, content) {
@@ -79,7 +41,11 @@ function rawString(name, content) {
   return `R"${delimiter}(${content})${delimiter}"`;
 }
 
-function writeAssets(outDir, firmwareOut, builderHtml, converterJs, mappingJs) {
+function readAsset(name) {
+  return fs.readFileSync(path.join(__dirname, name), "utf8");
+}
+
+function writeAssets(firmwareOut, assets) {
   fs.mkdirSync(firmwareOut, { recursive: true });
   const header = `#pragma once
 
@@ -90,6 +56,7 @@ namespace tuya_lora {
 extern const char PROFILE_BUILDER_HTML[] PROGMEM;
 extern const char PROFILE_CONVERTER_JS[] PROGMEM;
 extern const char PROFILE_MAPPING_JS[] PROGMEM;
+extern const char PROFILE_WORKER_JS[] PROGMEM;
 }  // namespace tuya_lora
 `;
   const cpp = `#include "web_assets.h"
@@ -97,13 +64,16 @@ extern const char PROFILE_MAPPING_JS[] PROGMEM;
 namespace tuya_lora {
 
 const char PROFILE_BUILDER_HTML[] PROGMEM =
-${rawString("A_HTML", builderHtml)};
+${rawString("A_HTML", assets.builder)};
 
 const char PROFILE_CONVERTER_JS[] PROGMEM =
-${rawString("A_JS", converterJs)};
+${rawString("A_JS", assets.converter)};
 
 const char PROFILE_MAPPING_JS[] PROGMEM =
-${rawString("A_MAP", mappingJs)};
+${rawString("A_MAP", assets.mapping)};
+
+const char PROFILE_WORKER_JS[] PROGMEM =
+${rawString("A_WORKER", assets.worker)};
 
 }  // namespace tuya_lora
 `;
@@ -113,68 +83,13 @@ ${rawString("A_MAP", mappingJs)};
 
 function main() {
   const args = parseArgs(process.argv);
-  const commit = args.commit || gitCommit(args.source) || "main";
-  const yamlBase = `https://raw.githubusercontent.com/make-all/tuya-local/${commit}/custom_components/tuya_local/devices/`;
-  const files = fs.readdirSync(args.source)
-    .filter((file) => file.endsWith(".yaml"))
-    .sort();
-
-  const used = new Set();
-  const profiles = [];
-  let parseErrors = 0;
-
-  for (const file of files) {
-    let descriptor;
-    try {
-      descriptor = yaml.load(fs.readFileSync(path.join(args.source, file), "utf8"), {
-        schema: yaml.DEFAULT_SCHEMA,
-      });
-    } catch (error) {
-      parseErrors += 1;
-      continue;
-    }
-    if (!descriptor || typeof descriptor !== "object") continue;
-
-    const id = uniqueId(path.basename(file, ".yaml"), used);
-    const name = displayName(descriptor);
-    const group = classifyGroup(descriptor, file);
-    const meta = { id, name, group, file, source: `tuya-local ${commit.slice(0, 12)}/${file}` };
-    const support = supportInfo(descriptor, meta);
-    profiles.push({
-      id,
-      name,
-      group,
-      file,
-      supported: support.supported,
-      discovery: support.discovery,
-      bytes: support.bytes,
-      reason: support.reason,
-    });
-  }
-
-  const order = new Map(groupOrder([...new Set(profiles.map((p) => p.group))]).map((g, i) => [g, i]));
-  profiles.sort((a, b) => (order.get(a.group) - order.get(b.group)) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
-
-  const catalog = {
-    generated: new Date().toISOString(),
-    tuya_commit: commit,
-    yaml_base_url: yamlBase,
-    groups: groupOrder([...new Set(profiles.map((p) => p.group))]),
-    profiles,
-  };
-
-  fs.mkdirSync(args.out, { recursive: true });
-  fs.writeFileSync(path.join(args.out, "catalog.json"), JSON.stringify(catalog));
-
-  const builderHtml = fs.readFileSync(path.join(__dirname, "profile_builder.html"), "utf8");
-  const converterJs = fs.readFileSync(path.join(__dirname, "profile_converter.mjs"), "utf8");
-  const mappingJs = fs.readFileSync(path.join(__dirname, "profile_mapping.mjs"), "utf8");
-  writeAssets(args.out, args.firmwareOut, builderHtml, converterJs, mappingJs);
-
-  console.log(`tuya-local commit: ${commit}`);
-  console.log(`descriptors: ${files.length}, parse errors: ${parseErrors}`);
-  console.log(`catalog profiles: ${profiles.length}, supported: ${profiles.filter((p) => p.supported).length}`);
-  console.log(`wrote ${path.join(args.out, "catalog.json")} and firmware assets in ${args.firmwareOut}`);
+  writeAssets(args.firmwareOut, {
+    builder: readAsset("profile_builder.html"),
+    converter: readAsset("profile_converter.mjs"),
+    mapping: readAsset("profile_mapping.mjs"),
+    worker: readAsset("profile_worker.mjs"),
+  });
+  console.log(`wrote ${path.join(args.firmwareOut, "web_assets.cpp/.h")}`);
 }
 
 main();

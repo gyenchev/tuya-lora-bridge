@@ -20,7 +20,9 @@ R"A_HTML(<!doctype html>
   a { color: #0969da; }
   .muted { opacity: .7; font-size: .92rem; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
-  input[type=search], input[type=url] { flex: 1; min-width: 220px; padding: 9px 11px; border: 1px solid #8886; border-radius: 8px; background: transparent; color: inherit; font: inherit; }
+  input[type=search], input[type=text], input[type=url] { flex: 1; min-width: 160px; padding: 9px 11px; border: 1px solid #8886; border-radius: 8px; background: transparent; color: inherit; font: inherit; }
+  input[type=text]#repo { min-width: 260px; }
+  input[type=text]#ref { min-width: 120px; max-width: 220px; }
   button { padding: 9px 13px; border: 1px solid #8886; border-radius: 8px; background: #fff; color: #17181b; font: inherit; cursor: pointer; }
   button.primary { background: #0969da; border-color: #0969da; color: #fff; }
   button:disabled { opacity: .45; cursor: not-allowed; }
@@ -37,6 +39,10 @@ R"A_HTML(<!doctype html>
   .badge.no { background: #cf222e22; color: #cf222e; }
   .status { margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: #8881; white-space: pre-wrap; }
   .status.err { background: #cf222e18; color: #cf222e; }
+  .progress-wrap { margin: 10px 0; }
+  .progress-track { height: 10px; border-radius: 999px; background: #8882; overflow: hidden; }
+  .progress-bar { height: 100%; width: 0; background: #0969da; transition: width .15s ease; }
+  .progress-text { display: block; margin-top: 4px; font-size: .82rem; opacity: .7; overflow-wrap: anywhere; }
   code { font: .85em ui-monospace, SFMono-Regular, Menlo, monospace; }
   @media (prefers-color-scheme: dark) {
     body { background: #111214; color: #e8e8ea; }
@@ -49,7 +55,7 @@ R"A_HTML(<!doctype html>
 <body>
 <main>
   <h1>Profile editor</h1>
-  <p class="muted">One active profile. Pick a device from the online tuya-local catalog, then fine-tune the generated JSON before saving it to the base.</p>
+  <p class="muted">One active profile. Browse tuya-local directly, convert a device, then fine-tune the generated JSON before saving it to the base.</p>
   <div id="base-info" class="status">Connecting to the base…</div>
 
   <section>
@@ -60,32 +66,56 @@ R"A_HTML(<!doctype html>
       <button id="format-json" type="button">Format JSON</button>
       <button id="save" class="primary" type="button">Save to base</button>
     </div>
-    <textarea id="profile-json" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Select a catalog device or paste a profile JSON object here."></textarea>
+    <textarea id="profile-json" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Select a tuya-local device or paste a profile JSON object here."></textarea>
     <p class="hint muted">The profile is stored as metadata plus one discovery entry per Home Assistant entity. `discovery` is the editable entity array; saving adds its count automatically. Topic tokens (`__STATE_TOPIC__`, `__CMD_TOPIC__`, `__RAW_ENTITY__`) are resolved by the base at publish time, so the profile survives MQTT topic/device-name changes. The base reboots after a successful save.</p>
   </section>
 
   <div id="status" class="status" hidden></div>
 
   <section>
-    <h2>Online tuya-local catalog</h2>
+    <h2>tuya-local catalog</h2>
+    <p class="muted">Fetches the device tree from GitHub. The first visit builds a grouped index from the upstream YAML files in the background; later visits reuse the cached index for the same tuya-local commit.</p>
     <div class="row">
-      <input id="catalog-url" type="url" spellcheck="false" value="https://raw.githubusercontent.com/gyenchev/tuya-lora-bridge/refs/heads/main/web/catalog.json">
-      <button id="load-online" class="primary" type="button">Load online catalog</button>
+      <input id="repo" type="text" spellcheck="false" autocomplete="off" value="make-all/tuya-local" aria-label="GitHub repository" title="GitHub repository (owner/name)">
+      <input id="ref" type="text" spellcheck="false" autocomplete="off" value="main" aria-label="Branch, tag or commit" title="Branch, tag or commit">
+      <button id="load-upstream" class="primary" type="button">Refresh upstream</button>
     </div>
     <div class="row">
-      <input id="search" type="search" placeholder="Search device, brand or model…" autocomplete="off">
+      <input id="search" type="search" placeholder="Search device name, file or group…" autocomplete="off">
+      <button id="build-index" type="button">Build grouped catalog</button>
+      <button id="cancel-index" type="button" hidden>Cancel</button>
+    </div>
+    <div class="muted" id="upstream-meta">Not loaded.</div>
+    <div class="progress-wrap" id="progress-wrap" hidden>
+      <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
+      <span class="progress-text" id="progress-text"></span>
     </div>
     <div id="online"></div>
   </section>
 </main>
 
 <script type="module">
-import { buildPack } from '/profile_converter.mjs';
+import {
+  buildPack,
+  classifyGroup,
+  displayName,
+  groupOrder,
+  slugify,
+} from '/profile_converter.mjs';
 
 const $ = (id) => document.getElementById(id);
+const DB_NAME = 'tuya-lora-profile-builder';
+const DB_STORE = 'catalogs';
+const DB_VERSION = 1;
+const CACHE_VERSION = 1;
+
 let info = null;
-let catalog = null;
 let yamlLib = null;
+let upstream = null;
+let catalog = null;
+let worker = null;
+let building = false;
+const yamlCache = new Map();
 
 function setStatus(message, isError = false) {
   const box = $('status');
@@ -103,12 +133,14 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-async function fetchJson(url, options) {
+async function fetchJson(url, options = {}) {
   const response = await fetch(url, { cache: 'no-store', ...options });
   const text = await response.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch {}
-  if (!response.ok) throw new Error(data?.error || text || `HTTP ${response.status}`);
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error || text || `HTTP ${response.status}`);
+  }
   return data;
 }
 
@@ -179,7 +211,7 @@ async function loadActiveProfile() {
     const response = await fetch('/api/profile/export', { cache: 'no-store' });
     if (response.status === 204) {
       $('profile-json').value = '';
-      $('profile-summary').textContent = 'No profile loaded. Select a catalog device or paste JSON.';
+      $('profile-summary').textContent = 'No profile loaded. Select a tuya-local device or paste JSON.';
       setStatus('No active profile on the base.');
       return;
     }
@@ -256,17 +288,46 @@ function makeItem({ title, subtitle, badge, disabled, action }) {
   return row;
 }
 
-function renderOnline() {
-  const host = $('online');
-  host.innerHTML = '';
-  if (!catalog) {
-    host.innerHTML = '<p class="muted">Load the online catalog to browse tuya-local devices.</p>';
+function prettyFile(file) {
+  return file
+    .replace(/\.yaml$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function matches(profile, query) {
+  if (!query) return true;
+  return `${profile.name || ''} ${profile.id || ''} ${profile.file || ''} ${profile.path || ''} ${profile.group || ''}`
+    .toLowerCase()
+    .includes(query);
+}
+
+function renderFlat(host) {
+  const query = $('search').value.trim().toLowerCase();
+  const files = upstream.files.filter((file) =>
+    !query || `${file.file} ${file.path} ${file.id}`.toLowerCase().includes(query));
+  if (!files.length) {
+    host.innerHTML = '<p class="muted">No descriptors matched the search.</p>';
     return;
   }
+  const details = document.createElement('details');
+  details.open = true;
+  details.innerHTML = `<summary>All descriptors (${files.length})</summary>`;
+  for (const file of files) {
+    details.appendChild(makeItem({
+      title: prettyFile(file.file),
+      subtitle: `${file.id} · ${file.path}`,
+      action: () => selectProfile(file),
+    }));
+  }
+  host.appendChild(details);
+}
+
+function renderGrouped(host) {
   const query = $('search').value.trim().toLowerCase();
   const groups = new Map();
   for (const profile of catalog.profiles) {
-    if (query && !`${profile.name} ${profile.id} ${profile.file} ${profile.group}`.toLowerCase().includes(query)) continue;
+    if (!matches(profile, query)) continue;
     if (!groups.has(profile.group)) groups.set(profile.group, []);
     groups.get(profile.group).push(profile);
   }
@@ -279,68 +340,335 @@ function renderOnline() {
     details.open = Boolean(query);
     details.innerHTML = `<summary>${escapeHtml(group)} (${profiles.length})</summary>`;
     for (const profile of profiles) {
+      const reason = profile.reason ? ` · ${profile.reason}` : '';
       details.appendChild(makeItem({
         title: profile.name,
-        subtitle: `${profile.id} · ${profile.file}`,
+        subtitle: `${profile.id} · ${profile.file}${reason}`,
         badge: profile.supported
           ? { label: `${profile.discovery} entities`, ok: true }
           : { label: 'conversion error', ok: false },
         disabled: !profile.supported,
-        action: async () => {
-          try {
-            setStatus(`Fetching ${profile.file}…`);
-            await ensureYaml();
-            const response = await fetch(catalog.yaml_base_url + profile.file, { cache: 'no-store' });
-            if (!response.ok) throw new Error(`YAML fetch failed: HTTP ${response.status}`);
-            const source = await response.text();
-            const yaml = yamlLib.load(source, { schema: yamlLib.DEFAULT_SCHEMA });
-            const pack = buildPack(yaml, {
-              id: profile.id,
-              name: profile.name,
-              group: profile.group,
-              source: `tuya-local ${catalog.tuya_commit.slice(0, 12)}/${profile.file}`,
-            }, {
-              stateTopic: '__STATE_TOPIC__',
-              commandTopic: '__CMD_TOPIC__',
-              rawEntity: '__RAW_ENTITY__',
-            });
-            if (profileSize(pack) > 200000) throw new Error('Generated profile is larger than the 200 KB limit');
-            setProfile(pack, `tuya-local catalog · ${profile.file}`);
-            setStatus('Profile loaded into the editor. Review it, then save to the base.');
-            $('profile-json').scrollIntoView({ behavior: 'smooth', block: 'start' });
-          } catch (error) {
-            setStatus(error.message, true);
-          }
-        },
+        action: () => selectProfile(profile),
       }));
     }
     host.appendChild(details);
   }
 }
 
+function renderOnline() {
+  const host = $('online');
+  host.innerHTML = '';
+  if (!upstream) {
+    host.innerHTML = '<p class="muted">Refresh the upstream catalog to browse tuya-local devices.</p>';
+    return;
+  }
+  if (catalog) {
+    renderGrouped(host);
+  } else {
+    renderFlat(host);
+  }
+}
+
+function updateProgress(done, total, file) {
+  const percent = total ? Math.round((done / total) * 100) : 0;
+  $('progress-bar').style.width = `${percent}%`;
+  $('progress-text').textContent =
+    `${done} / ${total} files (${percent}%)${file ? ` · ${file}` : ''}`;
+}
+
+function finishBuild() {
+  if (worker) {
+    worker.terminate();
+    worker = null;
+  }
+  building = false;
+  $('build-index').disabled = false;
+  $('cancel-index').hidden = true;
+  $('progress-wrap').hidden = true;
+}
+
+function stopBuild() {
+  if (worker) {
+    worker.terminate();
+    worker = null;
+  }
+  building = false;
+  $('build-index').disabled = false;
+  $('cancel-index').hidden = true;
+  $('progress-wrap').hidden = true;
+}
+
+function sortProfiles(profiles) {
+  const groups = [...new Set(profiles.map((profile) => profile.group || 'Sensors'))];
+  const order = new Map(groupOrder(groups).map((group, index) => [group, index]));
+  return profiles.slice().sort((a, b) => {
+    const groupA = order.get(a.group) ?? 999;
+    const groupB = order.get(b.group) ?? 999;
+    return groupA - groupB ||
+      String(a.name).localeCompare(String(b.name)) ||
+      String(a.id).localeCompare(String(b.id));
+  });
+}
+
+function startBuild() {
+  if (building || !upstream) return;
+  building = true;
+  catalog = null;
+  $('build-index').disabled = true;
+  $('cancel-index').hidden = false;
+  $('progress-wrap').hidden = false;
+  updateProgress(0, upstream.files.length);
+  setStatus('Building grouped catalog from upstream YAML…');
+  renderOnline();
+
+  const current = upstream;
+  worker = new Worker('/profile_worker.mjs', { type: 'module' });
+  worker.onmessage = async (event) => {
+    const data = event.data || {};
+    if (data.type === 'progress') {
+      updateProgress(data.done, data.total, data.file);
+      return;
+    }
+    if (data.type === 'done') {
+      const profiles = sortProfiles(data.profiles || []);
+      catalog = {
+        version: CACHE_VERSION,
+        repo: current.repo,
+        ref: current.ref,
+        sha: current.sha,
+        builtAt: new Date().toISOString(),
+        profiles,
+      };
+      await idbPut(`${current.repo}@${current.sha}`, catalog);
+      finishBuild();
+      renderOnline();
+      const supported = profiles.filter((profile) => profile.supported).length;
+      setStatus(`Grouped catalog ready: ${supported}/${profiles.length} descriptors convert.`);
+      return;
+    }
+    if (data.type === 'error') {
+      finishBuild();
+      setStatus(`Catalog build failed: ${data.error}`, true);
+    }
+  };
+  worker.onerror = (event) => {
+    finishBuild();
+    setStatus(`Catalog worker failed: ${event.message || 'unknown error'}`, true);
+  };
+  worker.postMessage({
+    type: 'build',
+    repo: current.repo,
+    commit: current.sha,
+    files: current.files,
+    concurrency: 24,
+  });
+}
+
+function cancelBuild() {
+  if (!building) return;
+  stopBuild();
+  renderOnline();
+  setStatus('Catalog build cancelled. The flat file list is still available.');
+}
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      reject(new Error('IndexedDB unavailable'));
+      return;
+    }
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(DB_STORE)) {
+        db.createObjectStore(DB_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function idbGet(key) {
+  try {
+    const db = await idbOpen();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readonly');
+      const request = tx.objectStore(DB_STORE).get(key);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function idbPut(key, value) {
+  try {
+    const db = await idbOpen();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).put(value, key);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    // The catalog still works for this session when IndexedDB is unavailable.
+  }
+}
+
+function refPath(ref) {
+  return ref.split('/').map((part) => encodeURIComponent(part)).join('/');
+}
+
+async function fetchUpstream(repo, ref) {
+  const api = `https://api.github.com/repos/${repo}`;
+  const headers = { Accept: 'application/vnd.github+json' };
+  const [tree, commit] = await Promise.all([
+    fetchJson(`${api}/git/trees/${refPath(ref)}?recursive=1`, { headers }),
+    fetchJson(`${api}/commits/${refPath(ref)}`, { headers }).catch(() => null),
+  ]);
+  if (!tree || !Array.isArray(tree.tree)) {
+    throw new Error('GitHub did not return a repository tree');
+  }
+  const prefix = 'custom_components/tuya_local/devices/';
+  const files = tree.tree
+    .filter((item) => item.type === 'blob' && item.path.startsWith(prefix) && item.path.endsWith('.yaml'))
+    .map((item) => ({ path: item.path, size: item.size || 0 }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+  if (!files.length) {
+    throw new Error('No tuya-local device YAML files found at that ref');
+  }
+  const sha = commit?.sha || tree.sha;
+  return { repo, ref, sha, files, truncated: Boolean(tree.truncated) };
+}
+
+function uniqueId(base, used) {
+  let id = slugify(base);
+  let suffix = 2;
+  while (used.has(id) || ['auto', 'fallback', 'unknown'].includes(id)) {
+    const tail = `_${suffix}`;
+    id = `${slugify(base, 23 - tail.length).replace(/_+$/g, '')}${tail}`;
+    suffix += 1;
+  }
+  used.add(id);
+  return id;
+}
+
+function prepareFiles(files) {
+  const used = new Set();
+  return files.map((item) => {
+    const file = item.path.split('/').pop();
+    const base = file.replace(/\.yaml$/i, '');
+    return {
+      path: item.path,
+      file,
+      id: uniqueId(base, used),
+      size: item.size || 0,
+    };
+  });
+}
+
+async function loadUpstream() {
+  stopBuild();
+  const repo = $('repo').value.trim() || 'make-all/tuya-local';
+  const ref = $('ref').value.trim() || 'main';
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
+    setStatus('Repository must use owner/name format.', true);
+    return;
+  }
+  $('load-upstream').disabled = true;
+  $('upstream-meta').textContent = 'Fetching tuya-local tree…';
+  try {
+    yamlCache.clear();
+    catalog = null;
+    const data = await fetchUpstream(repo, ref);
+    upstream = { ...data, files: prepareFiles(data.files) };
+    $('upstream-meta').textContent =
+      `${repo} @ ${data.sha.slice(0, 12)} · ${upstream.files.length} descriptors` +
+      (data.truncated ? ' · GitHub tree was truncated' : '');
+    try {
+      localStorage.setItem('tuya-lora-repo', repo);
+      localStorage.setItem('tuya-lora-ref', ref);
+    } catch {}
+    const cached = await idbGet(`${repo}@${data.sha}`);
+    if (cached && cached.version === CACHE_VERSION && Array.isArray(cached.profiles)) {
+      catalog = { ...cached, repo, ref, sha: data.sha };
+      renderOnline();
+      setStatus(`Loaded the cached grouped catalog for ${data.sha.slice(0, 7)}.`);
+    } else {
+      renderOnline();
+      startBuild();
+    }
+  } catch (error) {
+    upstream = null;
+    catalog = null;
+    $('upstream-meta').textContent = 'Not loaded.';
+    renderOnline();
+    setStatus(`Upstream catalog unavailable: ${error.message}`, true);
+  } finally {
+    $('load-upstream').disabled = false;
+  }
+}
+
 async function ensureYaml() {
   if (yamlLib) return yamlLib;
   setStatus('Loading YAML parser…');
-  await new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/js-yaml@4/dist/js-yaml.min.js';
-    script.onload = resolve;
-    script.onerror = () => reject(new Error('Could not load js-yaml from the CDN'));
-    document.head.appendChild(script);
-  });
-  yamlLib = window.jsyaml;
-  if (!yamlLib) throw new Error('js-yaml did not initialize');
+  yamlLib = await import('https://cdn.jsdelivr.net/npm/js-yaml@4/dist/js-yaml.mjs');
   return yamlLib;
 }
 
-async function loadOnline() {
+async function fetchYamlFile(path) {
+  if (yamlCache.has(path)) return yamlCache.get(path);
+  if (!upstream) throw new Error('Load the upstream catalog first');
+  const errors = [];
+  const urls = [
+    `https://cdn.jsdelivr.net/gh/${upstream.repo}@${upstream.sha}/${path}`,
+    `https://raw.githubusercontent.com/${upstream.repo}/${upstream.sha}/${path}`,
+  ];
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, { cache: 'force-cache' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const text = await response.text();
+      yamlCache.set(path, text);
+      return text;
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+  throw new Error(`YAML fetch failed: ${errors.join('; ')}`);
+}
+
+async function selectProfile(profile) {
   try {
-    setStatus('Fetching online catalog…');
-    catalog = await fetchJson($('catalog-url').value.trim());
-    setStatus(`Loaded ${catalog.profiles.length} profiles from tuya-local.`);
-    renderOnline();
+    if (!upstream) throw new Error('Load the upstream catalog first');
+    setStatus(`Fetching ${profile.file}…`);
+    const text = await fetchYamlFile(profile.path);
+    const yaml = await ensureYaml();
+    const descriptor = yaml.load(text, { schema: yaml.DEFAULT_SCHEMA });
+    const name = displayName(descriptor);
+    const group = profile.group && profile.group !== 'Unknown'
+      ? profile.group
+      : classifyGroup(descriptor, profile.file);
+    const pack = buildPack(descriptor, {
+      id: profile.id,
+      name,
+      group,
+      source: profile.source || `tuya-local ${upstream.sha.slice(0, 12)}/${profile.file}`,
+    }, {
+      stateTopic: '__STATE_TOPIC__',
+      commandTopic: '__CMD_TOPIC__',
+      rawEntity: '__RAW_ENTITY__',
+    });
+    if (profileSize(pack) > 200000) {
+      throw new Error('Generated profile is larger than the 200 KB limit');
+    }
+    setProfile(pack, `tuya-local ${upstream.sha.slice(0, 7)} · ${profile.file}`);
+    setStatus('Profile loaded into the editor. Review it, then save to the base.');
+    $('profile-json').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (error) {
-    setStatus(`Online catalog unavailable: ${error.message}`, true);
+    setStatus(error.message, true);
   }
 }
 
@@ -355,8 +683,17 @@ $('format-json').addEventListener('click', () => {
   }
 });
 $('save').addEventListener('click', saveProfile);
-$('load-online').addEventListener('click', loadOnline);
+$('load-upstream').addEventListener('click', loadUpstream);
+$('build-index').addEventListener('click', startBuild);
+$('cancel-index').addEventListener('click', cancelBuild);
 $('search').addEventListener('input', renderOnline);
+
+try {
+  const savedRepo = localStorage.getItem('tuya-lora-repo');
+  const savedRef = localStorage.getItem('tuya-lora-ref');
+  if (savedRepo) $('repo').value = savedRepo;
+  if (savedRef) $('ref').value = savedRef;
+} catch {}
 
 (async () => {
   try {
@@ -365,6 +702,7 @@ $('search').addEventListener('input', renderOnline);
   } catch (error) {
     $('base-info').textContent = `Could not reach the base: ${error.message}`;
   }
+  await loadUpstream();
 })();
 </script>
 </body>
@@ -3504,5 +3842,139 @@ export function formatHaToField(field, expr, haName) {
 
 export { dpNameToDp };
 )A_MAP";
+
+const char PROFILE_WORKER_JS[] PROGMEM =
+R"A_WORKER(// Builds the tuya-local catalog inside a Web Worker.
+//
+// The main thread supplies the filtered device file list and a resolved commit
+// SHA. This worker downloads each YAML, converts it with the shared converter,
+// and reports progress. The compact result is cached by the page in IndexedDB.
+
+import {
+  classifyGroup,
+  displayName,
+  supportInfo,
+} from "./profile_converter.mjs";
+import {
+  DEFAULT_SCHEMA,
+  load,
+} from "https://cdn.jsdelivr.net/npm/js-yaml@4/dist/js-yaml.mjs";
+
+const FETCH_TIMEOUT_MS = 20000;
+const DEFAULT_CONCURRENCY = 24;
+
+async function fetchText(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      cache: "force-cache",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchYaml(repo, commit, path) {
+  const errors = [];
+  const urls = [
+    `https://cdn.jsdelivr.net/gh/${repo}@${commit}/${path}`,
+    `https://raw.githubusercontent.com/${repo}/${commit}/${path}`,
+  ];
+  for (const url of urls) {
+    try {
+      return await fetchText(url);
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+  throw new Error(errors.join("; "));
+}
+
+function prettyFile(file) {
+  return file
+    .replace(/\.yaml$/i, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+async function buildCatalog({ repo, commit, files, concurrency }) {
+  const total = files.length;
+  const results = new Array(total);
+  const workers = Math.max(
+    1,
+    Math.min(concurrency || DEFAULT_CONCURRENCY, total || 1),
+  );
+  let next = 0;
+  let done = 0;
+
+  async function consume() {
+    while (true) {
+      const index = next;
+      next += 1;
+      if (index >= total) return;
+
+      const item = files[index];
+      const file = item.file || item.path.split("/").pop();
+      const source = `tuya-local ${commit.slice(0, 12)}/${file}`;
+      try {
+        const text = await fetchYaml(repo, commit, item.path);
+        const yaml = load(text, { schema: DEFAULT_SCHEMA });
+        const name = displayName(yaml);
+        const support = supportInfo(yaml, {
+          id: item.id,
+          name,
+          file,
+          source,
+        });
+        results[index] = {
+          id: item.id,
+          name,
+          group: support.group || classifyGroup(yaml, file),
+          file,
+          path: item.path,
+          supported: Boolean(support.supported),
+          discovery: support.discovery || 0,
+          bytes: support.bytes || 0,
+          reason: support.reason || "",
+          source,
+        };
+      } catch (error) {
+        results[index] = {
+          id: item.id,
+          name: prettyFile(file),
+          group: "Unknown",
+          file,
+          path: item.path,
+          supported: false,
+          discovery: 0,
+          bytes: 0,
+          reason: error.message,
+          source,
+        };
+      }
+
+      done += 1;
+      if (done === total || done % 10 === 0) {
+        postMessage({ type: "progress", done, total, file });
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: workers }, consume));
+  postMessage({ type: "done", profiles: results });
+}
+
+self.addEventListener("message", (event) => {
+  const data = event.data || {};
+  if (data.type !== "build") return;
+  buildCatalog(data).catch((error) => {
+    postMessage({ type: "error", error: error.message });
+  });
+});
+)A_WORKER";
 
 }  // namespace tuya_lora

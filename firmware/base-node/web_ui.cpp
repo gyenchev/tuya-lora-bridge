@@ -1870,6 +1870,11 @@ void handleProfileMapping() {
   server->send_P(200, "application/javascript", PROFILE_MAPPING_JS);
 }
 
+void handleProfileWorker() {
+  server->sendHeader("Cache-Control", "no-store");
+  server->send_P(200, "application/javascript", PROFILE_WORKER_JS);
+}
+
 void handleProfileTelemetry() {
   addProfileCors();
   server->sendHeader("Cache-Control", "no-store");
@@ -2032,6 +2037,7 @@ void webUiBegin() {
   server->on("/profiles", HTTP_GET, handleProfileBuilder);
   server->on("/profile_converter.mjs", HTTP_GET, handleProfileConverter);
   server->on("/profile_mapping.mjs", HTTP_GET, handleProfileMapping);
+  server->on("/profile_worker.mjs", HTTP_GET, handleProfileWorker);
   server->on("/api/profile/info", HTTP_GET, handleProfileInfo);
   server->on("/api/profile/export", HTTP_GET, handleProfileExport);
   server->on("/api/profile/telemetry", HTTP_GET, handleProfileTelemetry);

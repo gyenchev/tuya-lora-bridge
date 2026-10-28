@@ -72,13 +72,21 @@ connected to MQTT and Home Assistant.
 
 - [ ] `/profiles` loads the active profile from `/api/profile/export` and shows
   it as editable JSON.
-- [ ] Selecting an online catalog device replaces the textarea with the
-  generated profile JSON.
+- [ ] The catalog defaults to `make-all/tuya-local` / `main` and resolves the
+  commit SHA.
+- [ ] A flat searchable file list appears immediately.
+- [ ] The grouped catalog builds in the background with progress, and **Cancel**
+  leaves the flat list usable.
+- [ ] Selecting a catalog device replaces the textarea with the generated
+  profile JSON.
+- [ ] Reloading the page with the same commit loads the grouped catalog from
+  IndexedDB without rebuilding it.
+- [ ] Changing the ref or repository rebuilds or reloads the correct index.
 - [ ] Metadata, telemetry and discovery entries can be edited and saved.
 - [ ] The saved profile reboots the base and reports the expected
   `profile_entities`.
 - [ ] A large pack (81 entities / ~61 KB) uploads and publishes discovery.
-- [ ] The largest catalog pack (181 KB / 63 entities) uploads and reloads.
+- [ ] The largest upstream descriptor pack uploads and reloads.
 - [ ] Invalid JSON is rejected without replacing the last valid profile.
 - [ ] MQTT topic placeholders (`__STATE_TOPIC__`, `__CMD_TOPIC__`,
   `__RAW_ENTITY__`) resolve to the current device name and topics.
@@ -159,8 +167,9 @@ connected to MQTT and Home Assistant.
 
 ## Known limitations
 
-- Profiles are generated from tuya-local descriptors or edited as JSON; there is
-  no built-in profile list or offline catalog.
+- Profiles are built from upstream tuya-local descriptors in the browser or
+  edited as JSON; there is no built-in profile list, generated catalog file or
+  offline catalog.
 - One Tuya device is supported per bridge. Multi-device support is not
   implemented.
 - Raw DP snapshots are capped at 2560 bytes. Devices with larger snapshots are

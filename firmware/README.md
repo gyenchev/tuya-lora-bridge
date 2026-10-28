@@ -138,7 +138,7 @@ the nodes on trusted networks.
 | Home Assistant | Device name, timezone, discovery prefix and stable device identifier |
 | Timing | Offline timeout, snapshot/chunk timeouts, retry intervals, WiFi/MQTT reconnect intervals and display timings |
 | Control | Command enable. Command DPs and value ranges come from the active profile. |
-| Profile | The single active profile, its type/entity count and a link to `/profiles`. The profile editor loads a device from the online catalog, shows the generated profile JSON in an editable textarea, and saves it to the base. |
+| Profile | The single active profile, its type/entity count and a link to `/profiles`. The profile editor browses the upstream tuya-local repository, shows the generated profile JSON in an editable textarea, and saves it to the base. |
 | System | Setup AP credentials, web UI port, SD firmware filename, SD update countdown and factory reset |
 
 ### Remote node settings
@@ -160,11 +160,13 @@ If validation fails, the form reopens on the tab containing the error. The LoRa
 PSK must be identical on both nodes. Changing the device AP SSID or password
 requires re-pairing the Tuya device.
 
-The profile editor is the single path for new devices. Open `/profiles`, choose
-a descriptor from the online tuya-local catalog or paste/edit a profile JSON,
-then save it. The base streams the pack as NDJSON and stores metadata plus one
-small discovery file per entity in LittleFS. It supports all tuya-local entity
-types; native MQTT platforms are used where they exist, and
+The profile editor is the single path for new devices. Open `/profiles`, browse
+the upstream tuya-local repository (repository and ref are editable) or paste/edit
+a profile JSON, then save it. The first visit builds a grouped catalog in the
+browser from the upstream YAML files; the compact index is cached in IndexedDB by
+commit SHA. The base streams the saved pack as NDJSON and stores metadata plus
+one small discovery file per entity in LittleFS. It supports all tuya-local
+entity types; native MQTT platforms are used where they exist, and
 media players/remotes/infrared are decomposed into standard MQTT entities. A
 hidden **Raw DPs** sensor exposes every DP as an attribute, and the base
 publishes per-DP topics under the raw snapshot topic.
