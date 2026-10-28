@@ -329,3 +329,8 @@ the LoRa radio. Do not remove the card or power off during the update.
 - Restrict MQTT access to the bridge topics and use a dedicated MQTT user.
 - Treat the remote node as physically accessible: use a strong WPA2 password and
   keep the enclosure closed.
+
+## License
+
+Profile descriptors and generated profile assets include material derived from
+tuya-local under the MIT License. See [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).

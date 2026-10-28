@@ -1,3 +1,4 @@
+// Portions derived from tuya-local (MIT). See THIRD_PARTY_NOTICES.md.
 // Jinja code generation for tuya-local DP mappings.
 //
 // The generated templates run in Home Assistant. State templates read the raw

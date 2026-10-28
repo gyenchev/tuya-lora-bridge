@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Generates catalog/profile assets derived from tuya-local (MIT).
+// See THIRD_PARTY_NOTICES.md.
 // Generate the online catalog and firmware assets.
 //
 // Usage:

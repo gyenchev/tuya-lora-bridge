@@ -21,5 +21,5 @@ unsafe condition. Any mains-adjacent installation should be checked by a
 qualified electrician.
 
 The software and documentation are provided "as is", without warranty of any
-kind. See [`LICENSE`](LICENSE) for the full public-domain dedication and
-warranty disclaimer.
+kind. See [`LICENSE`](LICENSE) for the full MIT license text and warranty
+disclaimer.
