@@ -72,7 +72,8 @@ Merged feature PRs on `main`:
 - Board: TTGO LoRa32 V2.1 / T3 V1.6.1
 - USB port: `/dev/cu.usbserial-56570272181`
 - IP: `192.168.88.96`
-- Firmware: 0.4.0 on the device; this branch builds 0.5.0
+- Firmware: 0.5.0 (flashed from this branch)
+- Home Assistant device name: `CarCharger` (saved in NVS)
 - MQTT: connected
 - Web UI: `http://192.168.88.96/`
 - LoRa link: online, `have_seen=true`, `have_state=true`
@@ -236,14 +237,22 @@ Flash:
 ## 10. Validation already performed
 
 - Both nodes compile with 0.5.0 on this branch.
+- The base was flashed with 0.5.0 and reconnects to WiFi, MQTT and the LoRa link.
+- Retained-topic cleanup was performed against the broker:
+  - removed `tuya-lora/charger/#` (old device name);
+  - removed `tuya-lora/garage_charger/#` (old device name);
+  - removed `tuya-lora/carcharger/state` (legacy mapped state).
+- No stale Home Assistant discovery topics remained under `tuya_lora_bridge`;
+  the active profile publishes exactly its 22 pack entities plus `pack_raw` and
+  the four link entities.
 - Coordinated frequency changes, PSK-only changes and remote rollback were
-  validated on 0.4.0; re-test after flashing 0.5.0.
+  validated on 0.4.0; re-test after flashing 0.5.0 to the remote.
 - Duty-limit mapping and the 60-minute budget were validated on 0.4.0.
 - The profile editor/converter were validated on 0.4.0.
 
 ## 11. Known issues / next steps
 
-1. Flash 0.5.0 and re-run the checklist in `docs/testing.md`.
+1. Flash 0.5.0 to the remote and re-run the checklist in `docs/testing.md`.
 2. The current LoRa link is weak at approximately **RSSI -104 dBm / SNR -3.7 dB**.
    Check antenna orientation, cable loss, enclosure and distance. SF9 at
    869.525 MHz is currently in use; a higher SF may help range but increases
@@ -252,12 +261,12 @@ Flash:
    flash.
 4. Base post-apply rollback (no contact after applying) has not been separately
    fault-injected.
-5. Existing NVS keeps the old saved Home Assistant device name. The new default
-   `Tuya device` applies to fresh installs and factory resets; change the name
-   in **Settings > Home Assistant** to adopt it.
-6. This branch intentionally has no migration code. Retained discovery and
-   `state` messages from 0.4.0 are not cleared automatically. Clear the old
-   topics in the broker (or re-pair the HA MQTT device) after flashing.
+5. Existing NVS keeps the saved Home Assistant device name `CarCharger`, so
+   topics and entity IDs stay `tuya-lora/carcharger/...` and
+   `tuya_carcharger_*`. Change the name in **Settings > Home Assistant** to
+   adopt a new prefix.
+6. The 0.5.0 cleanup of old retained topics was performed manually. This branch
+   intentionally has no automatic migration for future installs.
 7. Factory reset returns to the all-zero PSK. Regenerate and apply before
    deployment.
 8. Keep `THIRD_PARTY_NOTICES.md` with separately distributed binaries or
