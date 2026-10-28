@@ -11,14 +11,13 @@ loss, or other harm to hardware, software, property, persons, or anything else
 arising from the use, misuse, or inability to use this project, even if the
 author was advised of the possibility of such damage.
 
-This project was originally intended to interact with an EV charger, but that
-scope can change at any time. It is **not** a certified EV charging controller,
+This project is a generic Tuya DP bridge. It is **not** a certified controller,
 safety device, or protective measure for any application, and no guarantee is
 made that it is suitable for any particular device or use. It must not replace
-the device's RCD/RCBO, control pilot, protective earth, fault handling, or any
-other local safety function. Do not use it as the only safeguard against an
-unsafe condition. Any mains-adjacent installation should be checked by a
-qualified electrician.
+the device's own protective devices, interlocks, fault handling, or any other
+local safety function. Do not use it as the only safeguard against an unsafe
+condition. Any mains-adjacent installation should be checked by a qualified
+electrician.
 
 The software and documentation are provided "as is", without warranty of any
 kind. See [`LICENSE`](LICENSE) for the full MIT license text and warranty

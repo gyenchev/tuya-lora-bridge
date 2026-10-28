@@ -38,18 +38,6 @@ int hexNibble(char c) {
 
 }  // namespace
 
-const char *statusName(uint8_t status) {
-  switch (status) {
-    case ST_AVAILABLE: return "available";
-    case ST_PLUGGED:   return "plugged_in";
-    case ST_CHARGING:  return "charging";
-    case ST_WAITING:   return "waiting";
-    case ST_CHARGED:   return "charged";
-    case ST_FAULT:     return "fault";
-    default:           return "unknown";
-  }
-}
-
 bool decodeHello(const uint8_t *payload, size_t len, HelloData &out) {
   if (!payload || len < 6) return false;
   out.role = payload[0];

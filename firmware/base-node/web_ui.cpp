@@ -14,12 +14,10 @@
 #include "ha_discovery.h"
 #include "lora_protocol.h"
 #include "lora_stats.h"
-#include "profiles.h"
 #include "web_assets.h"
 
 // Defined in base-node.ino (global namespace).
 extern PubSubClient mqtt;
-extern tuya_lora::StatusData lastStatus;
 extern tuya_lora::LoraStats loraStats;
 extern bool haveState;
 extern bool haveSeen;
@@ -171,7 +169,7 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
 
     <section class="tab-panel" id="tab-device" data-tab-panel="device" role="tabpanel">
       <h2>Home Assistant</h2>
-      <label for="ha_name">Device name <span class="def">default Tuya charger</span></label>
+      <label for="ha_name">Device name <span class="def">default Tuya device</span></label>
       <input id="ha_name" name="ha_name" type="text" maxlength="32" required value="{{HA_NAME}}">
       <p class="hint">Friendly name shown in Home Assistant. MQTT topics and Home Assistant entity IDs are derived from this name. Renaming the device changes both; the base clears the old discovery entries and republishes them with the new IDs and resolved profile placeholders.</p>
       <label for="timezone">Timezone <span class="def">default Europe/Sofia</span></label>
@@ -1034,9 +1032,9 @@ const char *hintFor(const char *name) {
   if (strcmp(name, "ha_device_id") == 0)
     return "Stable Home Assistant device identifier. Keep it unchanged when renaming the device.";
   if (strcmp(name, "offline_after_ms") == 0)
-    return "Mark the charger offline when no state arrives within this time.";
+    return "Mark the device offline when no state arrives within this time.";
   if (strcmp(name, "dp_query_interval_ms") == 0)
-    return "How often the base asks the charger for a fresh DP snapshot.";
+    return "How often the base asks the device for a fresh DP snapshot.";
   if (strcmp(name, "dp_query_timeout_ms") == 0)
     return "How long to wait for a complete DP snapshot before giving up.";
   if (strcmp(name, "dp_chunk_timeout_ms") == 0)
@@ -1054,7 +1052,7 @@ const char *hintFor(const char *name) {
   if (strcmp(name, "splash_ms") == 0)
     return "How long the boot splash stays visible.";
   if (strcmp(name, "enable_commands") == 0)
-    return "Allow MQTT commands to change charger state. Disable for read-only monitoring.";
+    return "Allow MQTT commands to change device state. Disable for read-only monitoring.";
   if (strcmp(name, "web_ui_port") == 0)
     return "HTTP port for this settings page. After changing it, reconnect on the new port.";
   if (strcmp(name, "wifi_setup_fallback_ms") == 0)
@@ -1406,7 +1404,7 @@ String pskWarningText(const BaseSettings &s) {
   }
   if (isValidPsk(s.loraPsk)) return "";
   return "<div class=\"warn\">LoRa PSK is not set. The base cannot talk to the "
-         "charger until both nodes have the same 32-character hex key.</div>";
+         "remote node until both nodes have the same 32-character hex key.</div>";
 }
 
 String pskPlaceholder(const BaseSettings &s) {
@@ -1587,48 +1585,6 @@ void handleApiStatus() {
   json += String(lastRssi);
   json += ",\"snr\":";
   json += String(lastSnr, 1);
-  json += ",\"status\":\"";
-  json += statusName(lastStatus.status);
-  json += "\",\"fault\":";
-  json += String(lastStatus.faultFlags);
-  json += ",\"plugged\":";
-  json += (lastStatus.plugged() ? "true" : "false");
-  json += ",\"charging\":";
-  json += (lastStatus.charging() ? "true" : "false");
-  json += ",\"charge_session_enabled\":";
-  json += (lastStatus.chargeSessionEnabled() ? "true" : "false");
-  json += ",\"charge_control\":";
-  json += (lastStatus.chargeEnabled ? "true" : "false");
-  json += ",\"waiting_for_rfid\":";
-  json += (lastStatus.waitingForRfid ? "true" : "false");
-  json += ",\"rfid\":";
-  json += (lastStatus.rfidActive ? "true" : "false");
-  json += ",\"schedule\":";
-  json += (lastStatus.scheduleActive ? "true" : "false");
-  json += ",\"current_limit\":";
-  json += String(lastStatus.currentLimit);
-  json += ",\"voltage_l1\":";
-  json += String(lastStatus.voltageL1dV / 10.0f, 1);
-  json += ",\"voltage_l2\":";
-  json += String(lastStatus.voltageL2dV / 10.0f, 1);
-  json += ",\"voltage_l3\":";
-  json += String(lastStatus.voltageL3dV / 10.0f, 1);
-  json += ",\"current_l1\":";
-  json += String(lastStatus.currentL1dA / 10.0f, 1);
-  json += ",\"current_l2\":";
-  json += String(lastStatus.currentL2dA / 10.0f, 1);
-  json += ",\"current_l3\":";
-  json += String(lastStatus.currentL3dA / 10.0f, 1);
-  json += ",\"power_kw\":";
-  json += String(lastStatus.powerW / 1000.0f, 2);
-  json += ",\"energy_kwh\":";
-  json += String(lastStatus.energyWh / 1000.0f, 2);
-  json += ",\"session_energy_kwh\":";
-  json += String(lastStatus.sessionWh / 1000.0f, 2);
-  json += ",\"temperature_c\":";
-  json += String(lastStatus.tempDc / 10.0f, 1);
-  json += ",\"charge_seconds\":";
-  json += String(lastStatus.chargeSeconds);
   json += ",\"profile\":\"";
   json += jsonEscape(profileActiveId());
   json += "\",\"profile_entities\":";

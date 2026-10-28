@@ -15,7 +15,7 @@
 #undef SD_MOSI
 #undef SD_CS
 
-#define FW_VERSION "0.4.0"
+#define FW_VERSION "0.5.0"
 
 // ---------------------------------------------------------------------------
 // Configuration web UI
@@ -102,28 +102,8 @@
 #define HA_DEVICE_ID        "tuya_lora_bridge"
 
 // Friendly name shown in Home Assistant.
-#define HA_DEVICE_NAME      "Tuya charger"
+#define HA_DEVICE_NAME      "Tuya device"
 
 // Control is enabled, but the base only allows a command after a profile has
 // been loaded and a DP snapshot has been seen.
 #define ENABLE_COMMANDS 1
-
-#define CHARGER_MIN_CURRENT 6
-#define CHARGER_MAX_CURRENT 32
-#define CHARGER_MIN_DELAY_H 0
-#define CHARGER_MAX_DELAY_H 15
-
-// Control DP numbers. These are the best-known values from public Tuya charger
-// profiles; confirm them against tuya-lora/charger/dps before relying on control.
-#define DP_SINGLE_CHARGE_ID  112
-#define DP_SINGLE_CURRENT_ID 102
-#define DP_SINGLE_DELAY_ID   104
-#define DP_SINGLE_MODE_ID    14
-
-#define DP_THREE_CHARGE_ID   124
-#define DP_THREE_CURRENT_ID  115
-#define DP_THREE_DELAY_ID    118
-#define DP_THREE_MODE_ID     14
-
-#define DP_OBZ2_CHARGE_ID    124
-#define DP_OBZ2_CURRENT_ID   115

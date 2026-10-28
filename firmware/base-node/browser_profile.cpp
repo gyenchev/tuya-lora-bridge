@@ -17,7 +17,6 @@ namespace {
 
 constexpr const char *META_PATH = "/profile.meta.json";
 constexpr const char *META_TMP = "/profile.meta.tmp";
-constexpr const char *LEGACY_PATH = "/profile.json";
 constexpr size_t MAX_META_BYTES = 20000;
 constexpr size_t MAX_ITEM_BYTES = 24000;
 constexpr size_t MAX_TOTAL_BYTES = 250000;
@@ -193,7 +192,6 @@ void removeOldPack() {
   }
   LittleFS.remove(META_PATH);
   LittleFS.remove(META_TMP);
-  LittleFS.remove(LEGACY_PATH);
   loaded = false;
 }
 
@@ -324,7 +322,7 @@ void cleanupOrphanFiles() {
     const bool currentItem = loaded && name.startsWith(keep) && name.endsWith(".json");
     const bool meta = name == META_PATH;
     if (!currentItem && !meta &&
-        (name.startsWith("/p") || name == LEGACY_PATH || name == META_TMP)) {
+        (name.startsWith("/p") || name == META_TMP)) {
       LittleFS.remove(name);
     }
     file = root.openNextFile();
@@ -518,7 +516,6 @@ void browserProfilePublishDiscovery() {
     configJson.replace("__STATE_TOPIC__", mqttTopicDps());
     configJson.replace("__CMD_TOPIC__", mqttTopicPackCommand());
     configJson.replace("__RAW_ENTITY__", browserProfileRawEntityId());
-    configJson.replace("tuya-lora/charger", mqttTopicPrefix());
     JsonDocument doc;
     if (deserializeJson(doc, configJson)) continue;
     addHaCommon(doc);

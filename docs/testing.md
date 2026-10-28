@@ -30,7 +30,7 @@ connected to MQTT and Home Assistant.
 - [ ] After a snapshot, the last-frame speed, burst speed, wire bytes and DP
   snapshot speed change; the duty percentages stay against the fixed 3600 s
   window and do not decay while idle.
-- [ ] The LoRa statistics are absent from the MQTT link/state/discovery payloads.
+- [ ] The LoRa statistics are absent from the MQTT link/discovery payloads.
 
 ### Coordinated LoRa configuration
 
@@ -87,16 +87,17 @@ connected to MQTT and Home Assistant.
 - [ ] `/api/profile/telemetry` returns the profile's telemetry fields.
 - [ ] The status page renders Device telemetry from the active profile and falls
   back to raw DP rows when the profile has no telemetry metadata.
-- [ ] Status-page top tiles show only link/profile information, not charger-only
-  state/power/energy tiles.
-- [ ] Base OLED shows `Device: available/unknown` and `Profile: <name>`, not
-  `Charger`/`Power` rows.
-- [ ] With MQTT buffer 8192, the Feyree Charge current discovery (`pack_charge_current`)
-  appears in HA; with a 2048 buffer it is rejected and a stale entity can remain.
-- [ ] Setting Charge current to 32 A in HA publishes `{"115":32}` (or the active
-  variant DP), returns an `ok` command result, and updates raw DP 115/125.
-- [ ] The HA number and base Device telemetry both show 32 A after the command.
-- [ ] Problem is OFF while DP 10 is 0 and ON for a non-zero fault.
+- [ ] Status-page top tiles show only link/profile information, not legacy
+  device-specific state/power/energy tiles.
+- [ ] Base OLED shows `Device: available/unknown` and `Profile: <name>`.
+- [ ] With MQTT buffer 8192, a large profile's discovery entity appears in HA;
+  with a 2048 buffer it is rejected and a stale entity can remain.
+- [ ] Setting a profile number entity in HA publishes the expected DP fragment,
+  returns an `ok` command result, and updates the raw DP snapshot.
+- [ ] The HA number and base Device telemetry both show the new value after the
+  command.
+- [ ] A profile problem binary sensor is OFF for zero and ON for a non-zero
+  value.
 - [ ] Stale pack discovery topics from previous profiles are removed so HA does
   not keep an old entity ID.
 
@@ -106,16 +107,17 @@ connected to MQTT and Home Assistant.
 - [ ] The command is rejected while a snapshot is in progress.
 - [ ] A duplicate command does not execute twice.
 - [ ] A command timeout is reported and is not retried automatically.
-- [ ] No command starts charging after a reboot or link recovery.
-- [ ] The profile's charge entity reflects the actual session state.
-- [ ] Delay/current controls write the DPs from the active profile's command
-  templates.
+- [ ] No command changes the device state after a reboot or link recovery.
+- [ ] The profile's control entity reflects the actual device state.
+- [ ] Number/select/switch controls write the DPs from the active profile's
+  command templates.
 
 ### Safety
 
-- [ ] The device's local RCD/RCBO and control pilot remain functional.
+- [ ] The device's local protective devices and safety functions remain
+  functional.
 - [ ] The bridge does not interrupt mains power.
-- [ ] Loss of LoRa, WiFi or MQTT does not change the device's charging state.
+- [ ] Loss of LoRa, WiFi or MQTT does not change the device's state.
 - [ ] MQTT command topics are accessible only to trusted clients.
 - [ ] The enclosure, cable gland and strain relief are installed correctly.
 - [ ] A qualified person has checked any mains-adjacent work.
@@ -136,7 +138,7 @@ connected to MQTT and Home Assistant.
 | Base offline | MQTT LWT offline; device unaffected |
 | Home Assistant restart | State restored; no command replay |
 | ESP32 reboot | Reconnects; no auto-start |
-| Device reboot | Reconnects; state republished |
+| Device reboot | Reconnects; DP snapshot republished |
 | 24-hour soak | No resets; stable heap; no stuck TCP |
 | Airtime measurement | Below 1% at 868 MHz |
 | Final range test | Stable RSSI/SNR at the installed position |
@@ -147,8 +149,7 @@ connected to MQTT and Home Assistant.
   60 seconds.
 - The profile's command templates send the expected DP values with an ACK and a
   visible result.
-- Link loss marks the bridge unavailable without changing the device's charging
-  state.
+- Link loss marks the bridge unavailable without changing the device's state.
 - No auto-start occurs after any reboot.
 - The 24-hour soak completes without resets, memory growth or stuck connections.
 - Airtime stays below the 1% EU limit.

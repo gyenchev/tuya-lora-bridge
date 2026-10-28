@@ -85,9 +85,8 @@ Configuration frames are described below.
 3. The base reassembles the chunks, sends `DP_ACK` with a 32-bit bitmap of the
    chunks it has, and asks for missing chunks again if needed.
 4. The remote retransmits only the missing chunks after a short timeout.
-5. The base parses the raw `dps` object, detects the profile, publishes
-   `tuya-lora/<slug>/dps` and `tuya-lora/<slug>/state`, and schedules the next
-   query.
+5. The base parses the raw `dps` object, publishes `tuya-lora/<slug>/dps` and
+   the per-DP topics, and schedules the next query.
 
 A full snapshot is requested every 60 seconds. The base marks the remote link
 offline after 10 minutes without a valid frame or chunk. The raw snapshot is
@@ -99,11 +98,11 @@ snapshot; the default 4096-byte buffer covers the 2560-byte snapshot cap.
 `DP_SET` contains the inside of the Tuya `dps` object:
 
 ```json
-{"124":"OpenCharging"}
-{"124":"CloseCharging"}
-{"115":16}
-{"118":5}
-{"104":5,"14":"charge_schedule"}
+{"1":true}
+{"1":false}
+{"2":16}
+{"3":5}
+{"4":5,"5":"schedule"}
 ```
 
 The remote wraps the fragment in the correct Tuya `CONTROL` (3.1/3.3) or
@@ -113,13 +112,13 @@ can change without reflashing the remote node.
 Control is accepted only after a profile is loaded and the base has received a
 valid snapshot. Without a profile, commands are rejected.
 
-## State mapping
+## Profile mapping
 
-The LoRa link has no dedicated status payload. The base decodes the raw `dps`
-object into its local `StatusData` struct and publishes the mapped state to
-`tuya-lora/<slug>/state`. DP numbers and meanings are documented in
-[`tuya-device.md`](tuya-device.md); published fields are documented in
-[`home-assistant.md`](home-assistant.md).
+The LoRa link has no dedicated status payload. The base publishes the raw `dps`
+object to `tuya-lora/<slug>/dps` and the per-DP topics. Home Assistant entity
+templates in the active profile read that snapshot directly. DP numbers and
+meanings are documented in [`tuya-device.md`](tuya-device.md); published fields
+are documented in [`home-assistant.md`](home-assistant.md).
 
 Start and stop are explicit `DP_SET` values, not toggles. A duplicated `DP_SET`
 is dropped by replay protection and is not executed twice.
@@ -188,25 +187,12 @@ calculator for the selected band. The 1% reference applies to the EU
 868.0-868.6 MHz sub-band; the other sub-bands have 0.1% or 10% limits. The UI
 shows the allowed airtime, estimated frame airtime and minimum spacing.
 
-## Control DP mapping
+## Control fragments
 
-The base builds these fragments from the active profile. The DP numbers are
-defaults in `base-node/config.h`; confirm the real map in
-`tuya-lora/<slug>/dps` before relying on remote control.
-
-| Action | Single-phase | 3-phase | F-OBZ2 |
-|---|---|---|---|
-| Charge on | `{"112":true}` | `{"124":"OpenCharging"}` | `{"124":0}` |
-| Charge off | `{"112":false}` | `{"124":"CloseCharging"}` | `{"124":1}` |
-| Current limit | `{"102":<A>}` | `{"115":<A>}` | `{"115":<A>}` |
-| Delay | `{"104":<h>,"14":"charge_schedule"}` | `{"118":<h>}` | not mapped |
-| Mode | `{"14":"charge_now"}` / `{"14":"charge_schedule"}` | same | not mapped |
-
-`<A>` is clamped to the configured current range; `<h>` is 0–15 hours. For the
-single-phase profile, delay `0` sends `charge_now` instead of
-`charge_schedule`. The 3-phase profile writes only DP `118`; DP `14` is not part
-of its delay path. The F-OBZ2 profile has no public delay or mode DP, so those
-commands are rejected.
+The base builds `DP_SET` fragments from the active profile's command templates.
+The profile editor shows the exact DP numbers and values for the selected
+device. Confirm the real map in `tuya-lora/<slug>/dps` before relying on remote
+control.
 
 Other Tuya devices require their own DP map and control fragments.
 
@@ -314,7 +300,7 @@ The base publishes `tuya-lora/<slug>/link` on every valid LoRa frame and every
   "seq": 42,
   "boot_id": 123456789,
   "last_seen": "2026-10-22T11:32:05Z",
-  "fw": "0.4.0"
+  "fw": "0.5.0"
 }
 ```
 

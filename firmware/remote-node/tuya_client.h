@@ -39,7 +39,7 @@ class TuyaClient {
   bool query();
 
   // Send a CONTROL/CONTROL_NEW frame. dpsJson is the *inside* of the Tuya
-  // "dps" object, for example: {"112":true} or {"124":"OpenCharging"}.
+  // "dps" object, for example: {"1":true} or {"2":42}.
   // The caller is responsible for using the correct DP IDs for its device.
   bool setDps(const String &dpsJson);
 

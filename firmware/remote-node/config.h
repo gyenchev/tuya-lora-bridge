@@ -15,7 +15,7 @@
 #undef SD_MOSI
 #undef SD_CS
 
-#define FW_VERSION "0.4.0"
+#define FW_VERSION "0.5.0"
 
 // ---------------------------------------------------------------------------
 // Configuration web UI

@@ -9,44 +9,12 @@ discovery configs. No custom integration is required.
 
 | Topic | Retain | Payload |
 |---|---|---|
-| `tuya-lora/<slug>/state` | yes | mapped state JSON for diagnostics |
 | `tuya-lora/<slug>/link` | yes | LoRa link diagnostics |
 | `tuya-lora/<slug>/dps` | yes | raw Tuya DP snapshot |
-| `tuya-lora/<slug>/dps/<dp-id>` | yes | per-DP value, published in browser-pack mode |
+| `tuya-lora/<slug>/dps/<dp-id>` | yes | per-DP value |
 | `tuya-lora/<slug>/availability` | yes | `online` / `offline` |
 | `tuya-lora/<slug>/command/result` | no | command result JSON |
 | `tuya-lora/<slug>/debug` | no | profile and snapshot summary |
-
-Example `state`:
-
-```json
-{
-  "status": "charging",
-  "fault": 0,
-  "plugged": true,
-  "charging": true,
-  "charge_enabled": true,
-  "charge_control": true,
-  "waiting_for_authorization": false,
-  "rfid": false,
-  "schedule": false,
-  "current_limit": 16,
-  "voltage_l1": 231.2,
-  "voltage_l2": 0.0,
-  "voltage_l3": 0.0,
-  "current_l1": 6.7,
-  "current_l2": 0.0,
-  "current_l3": 0.0,
-  "power": 1.55,
-  "energy": 123.45,
-  "session_energy": 1.23,
-  "temperature": 31.2,
-  "charge_seconds": 3600,
-  "profile": "feyree_43_evcharger",
-  "profile_entities": 22,
-  "delay_hours": 0
-}
-```
 
 Example `link`:
 
@@ -60,7 +28,7 @@ Example `link`:
   "seq": 42,
   "boot_id": 123456789,
   "last_seen": "2026-10-22T11:32:05Z",
-  "fw": "0.4.0"
+  "fw": "0.5.0"
 }
 ```
 
@@ -68,15 +36,11 @@ The base publishes `link` as soon as it receives a valid LoRa frame, before the
 device itself is reachable. Device entities remain `unknown` until the first DP
 snapshot arrives.
 
-Profile fields:
+Profile diagnostics are available from the base HTTP API and the `debug` topic:
 
 - `profile` is the active profile ID, or `none` before a profile is saved.
 - `profile_entities` is the number of discovery entities in the active profile.
-- `profile_error` is present when no profile is loaded or no DP snapshot has
-  been seen.
-
-`delay_hours` is the last reported delay from the active profile's delay DP. It
-can be `0` when the profile does not expose a delay.
+- `profile_error` is set when no profile is loaded.
 
 ### Commands published to the base
 
@@ -113,12 +77,12 @@ valid DP snapshot. A command is rejected while another command or a snapshot is
 in progress. The remote does not validate DP semantics; it only forwards the
 fragment to Tuya after an authenticated LoRa frame.
 
-### Browser pack entities
+### Profile entities
 
-A browser pack does not use per-entity state topics. It publishes precompiled
-Home Assistant discovery configs; the templates read the raw snapshot at
-`tuya-lora/<slug>/dps` and command templates publish a JSON `dps` fragment to
-`tuya-lora/<slug>/command/dp`.
+Profile entities do not use per-entity state topics. The base publishes
+precompiled Home Assistant discovery configs whose templates read the raw
+snapshot at `tuya-lora/<slug>/dps`; command templates publish a JSON `dps`
+fragment to `tuya-lora/<slug>/command/dp`.
 
 The base also publishes:
 
@@ -132,7 +96,7 @@ prefixed with `pack_` on the base. Examples:
 
 ```text
 homeassistant/sensor/tuya_lora_bridge/pack_status/config
-homeassistant/number/tuya_lora_bridge/pack_charge_current/config
+homeassistant/number/tuya_lora_bridge/pack_value/config
 homeassistant/sensor/tuya_lora_bridge/pack_raw/config
 ```
 
@@ -149,7 +113,7 @@ The default discovery prefix is `homeassistant`. Example topics:
 ```text
 homeassistant/sensor/tuya_lora_bridge/rssi/config
 homeassistant/sensor/tuya_lora_bridge/pack_status/config
-homeassistant/number/tuya_lora_bridge/pack_charge_current/config
+homeassistant/number/tuya_lora_bridge/pack_value/config
 homeassistant/sensor/tuya_lora_bridge/pack_raw/config
 ```
 
@@ -162,14 +126,14 @@ Common device block:
 {
   "device": {
     "identifiers": ["tuya_lora_bridge"],
-    "name": "Tuya charger",
+    "name": "Tuya device",
     "manufacturer": "",
     "model": "Tuya device via Tuya LoRa Bridge",
-    "sw_version": "0.4.0"
+    "sw_version": "0.5.0"
   },
   "origin": {
     "name": "tuya-lora-bridge",
-    "sw_version": "0.4.0"
+    "sw_version": "0.5.0"
   }
 }
 ```
@@ -186,8 +150,8 @@ the prefix is not duplicated.
 
 Examples:
 
-- Device name `Tuya charger` → `sensor.tuya_charger_power`
-- Device name `CarCharger` → `sensor.tuya_carcharger_power`
+- Device name `Tuya device` → `sensor.tuya_device_pack_status`
+- Device name `Workshop sensor` → `sensor.tuya_workshop_sensor_pack_temperature`
 
 ## Entities
 
@@ -212,49 +176,13 @@ Additional transfer telemetry — frame/byte counts, burst and per-frame speeds,
 **LoRa** tab at `/lora` and in `/api/status`. It is deliberately not published
 to MQTT or Home Assistant.
 
-### Control
+### Controls
 
 Controls are defined by the active profile's discovery entries and command
-templates. A typical charger profile exposes a charge current number, charge
-delay/duration numbers and start/stop buttons. Their entity IDs use the
-`tuya_<device-name>_pack_<entity-name>` prefix (for example
-`number.tuya_carcharger_pack_charge_current`) and are listed in the profile
+templates. Depending on the profile, this can be a switch, number, select,
+button or text entity. Their entity IDs use the
+`tuya_<device-name>_pack_<entity-name>` prefix and are listed in the profile
 JSON.
-
-### Status values
-
-| Value | Meaning |
-|---|---|
-| `available` | no vehicle connected |
-| `plugged_in` | vehicle connected, not charging |
-| `charging` | charging |
-| `waiting` | waiting for authorization or schedule |
-| `charged` | session complete |
-| `fault` | device fault |
-| `unknown` | bridge cannot read the device |
-
-### Charge switch behavior
-
-The switch reports `ON` only when the session is active and the charge-control
-DP is `OpenCharging`. It reports `OFF` for `available`, `waiting` while
-authorization is required, `charged` and `fault`. It also reports `OFF` after a
-stop command even if the status still says `plugged_in`. The raw DP `124` value
-is published separately as `charge_control` for diagnostics. The charging binary
-sensor shows whether the vehicle is drawing power now.
-
-Turning the switch `ON` sends the profile's start DP; turning it `OFF` sends the
-stop DP. The momentary **Enable charging** and **Disable charging** buttons send
-the start and stop commands directly.
-
-### Charge delay behavior
-
-Delay is mapped only for the single-phase (`104`) and 3-phase (`118`) profiles.
-The F-OBZ2 profile has no public delay DP, so delay commands are rejected. For
-single-phase, setting a delay also sets DP `14` to `charge_schedule`; setting
-`0` restores `charge_now`. The 3-phase profile writes only DP `118`.
-
-A delay is not a start command. Set the delay first, then turn the charge switch
-on or press **Enable charging**.
 
 ## Availability
 
@@ -273,81 +201,63 @@ not to trust stale data.
 
 ## Automations
 
-### Off-peak charging
+Replace the example entity IDs with the IDs generated for your profile.
+
+### Timed control
 
 ```yaml
-alias: Tuya charger off-peak charge
+alias: Tuya device scheduled control
 triggers:
   - trigger: time
     at: "23:00:00"
 conditions:
   - condition: state
-    entity_id: binary_sensor.tuya_charger_plugged
-    state: "on"
-  - condition: state
-    entity_id: input_boolean.tuya_charger_auto_charge
+    entity_id: binary_sensor.tuya_device_pack_ready
     state: "on"
 actions:
   - action: number.set_value
     target:
-      entity_id: number.tuya_charger_current_limit
+      entity_id: number.tuya_device_pack_value
     data:
       value: 16
   - action: switch.turn_on
     target:
-      entity_id: switch.tuya_charger_charge_control
+      entity_id: switch.tuya_device_pack_switch
 mode: single
 ```
 
-Stop in the morning:
+Stop later:
 
 ```yaml
-alias: Tuya charger stop at 07:00
+alias: Tuya device stop
 triggers:
   - trigger: time
     at: "07:00:00"
 actions:
   - action: switch.turn_off
     target:
-      entity_id: switch.tuya_charger_charge_control
+      entity_id: switch.tuya_device_pack_switch
 mode: single
 ```
 
 ### Fault notification
 
 ```yaml
-alias: Tuya charger fault notify
+alias: Tuya device fault notify
 triggers:
   - trigger: state
-    entity_id: binary_sensor.tuya_charger_fault
+    entity_id: binary_sensor.tuya_device_pack_problem
     to: "on"
 actions:
   - action: notify.notify
     data:
       message: >-
-        Tuya charger fault. Raw fault code:
-        {{ states('sensor.tuya_charger_fault_code') }}
+        Tuya device fault. Raw fault code:
+        {{ states('sensor.tuya_device_pack_fault_code') }}
 mode: single
 ```
 
 Use any notification service configured in Home Assistant.
-
-### Charge complete
-
-```yaml
-alias: Tuya charger charge complete
-triggers:
-  - trigger: state
-    entity_id: sensor.tuya_charger_status
-    to: "charged"
-actions:
-  - action: notify.notify
-    data:
-      message: >-
-        Car charging complete. Session:
-        {{ states('sensor.tuya_charger_session_energy') }} kWh.
-mode: single
-```
 
 ### Link lost warning
 
@@ -355,8 +265,7 @@ mode: single
 alias: Tuya LoRa Bridge offline
 triggers:
   - trigger: state
-    entity_id: sensor.tuya_charger_status
-    to: "unavailable"
+    entity_id: sensor.tuya_device_link_age
     for: "00:05:00"
 actions:
   - action: notify.notify
@@ -365,27 +274,27 @@ actions:
 mode: single
 ```
 
-### Slow solar surplus control
+### Slow value adjustment
 
-The link updates every 60 seconds. Use it for slow current adjustments, not fast
-load balancing.
+The link updates every 60 seconds. Use it for slow adjustments, not real-time
+control.
 
 ```yaml
-alias: Tuya charger solar current
+alias: Tuya device slow adjustment
 triggers:
   - trigger: time_pattern
     minutes: "/5"
 conditions:
   - condition: state
-    entity_id: binary_sensor.tuya_charger_charging
+    entity_id: binary_sensor.tuya_device_pack_active
     state: "on"
 actions:
   - action: number.set_value
     target:
-      entity_id: number.tuya_charger_current_limit
+      entity_id: number.tuya_device_pack_value
     data:
       value: >-
-        {{ [6, [16, (states('sensor.solar_excess_power') | float / 230) | int] | min] | max }}
+        {{ [6, [16, (states('sensor.example_excess_power') | float / 230) | int] | min] | max }}
 mode: single
 ```
 
@@ -393,27 +302,18 @@ mode: single
 
 ```yaml
 type: entities
-title: Tuya charger
+title: Tuya device
 entities:
-  - sensor.tuya_charger_status
-  - sensor.tuya_charger_power
-  - sensor.tuya_charger_current_l1
-  - sensor.tuya_charger_voltage_l1
-  - sensor.tuya_charger_energy
-  - sensor.tuya_charger_temperature
-  - binary_sensor.tuya_charger_plugged
-  - binary_sensor.tuya_charger_charging
-  - binary_sensor.tuya_charger_fault
-  - number.tuya_charger_current_limit
-  - number.tuya_charger_charge_delay
-  - switch.tuya_charger_charge_control
-  - button.tuya_charger_charge_enable
-  - button.tuya_charger_charge_disable
-  - sensor.tuya_charger_last_seen
+  - sensor.tuya_device_pack_status
+  - sensor.tuya_device_pack_value
+  - binary_sensor.tuya_device_pack_problem
+  - switch.tuya_device_pack_switch
+  - sensor.tuya_device_rssi
+  - sensor.tuya_device_last_seen
 ```
 
-Add a history graph for `sensor.tuya_charger_power` and an energy dashboard
-entry for `sensor.tuya_charger_energy`.
+Add history graphs for the profile sensors you care about and an energy
+dashboard entry for any cumulative energy sensor in the profile.
 
 ## Testing MQTT without Home Assistant
 

@@ -37,7 +37,6 @@ String mqttTopicPrefix() {
   return String("tuya-lora/") + slug;
 }
 
-String mqttTopicState() { return mqttTopicPrefix() + "/state"; }
 String mqttTopicLink() { return mqttTopicPrefix() + "/link"; }
 String mqttTopicAvailability() { return mqttTopicPrefix() + "/availability"; }
 String mqttTopicDps() { return mqttTopicPrefix() + "/dps"; }
@@ -83,8 +82,6 @@ void addHaCommon(JsonDocument &doc) {
 
 bool publishHaConfig(const String &component, const String &objectId,
                      JsonDocument &doc) {
-  // HA 2025.9+ uses default_entity_id for the suggested entity ID. Keep
-  // object_id as a fallback for older Home Assistant releases.
   doc["default_entity_id"] = component + "." + haObjectId(objectId.c_str());
   const String topic = haDiscoveryTopic(component, objectId);
   String payload;

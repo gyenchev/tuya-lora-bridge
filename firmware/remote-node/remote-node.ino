@@ -9,8 +9,8 @@
  *      in chunks, and applies DP_SET by sending the received `dps` fragment as
  *      a Tuya CONTROL/CONTROL_NEW frame.
  *
- * It deliberately does not know which DP means charging, current, or delay.
- * That mapping belongs to the base node.
+ * It deliberately does not interpret the DP map. That mapping belongs to the
+ * base node.
  */
 
 #include <WiFi.h>

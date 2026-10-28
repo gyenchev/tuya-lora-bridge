@@ -50,10 +50,10 @@ Each pack is a list of Home Assistant MQTT discovery entries plus metadata:
 ```json
 {
   "format": 1,
-  "id": "feyree_ev_charger",
-  "name": "EV charger",
-  "device_type": "Chargers",
-  "source": "tuya-local <commit>/feyree_ev_charger.yaml",
+  "id": "generic_switch",
+  "name": "Tuya device",
+  "device_type": "Switches & controls",
+  "source": "tuya-local <commit>/example.yaml",
   "discovery": [
     {
       "component": "sensor",
@@ -69,7 +69,7 @@ Each pack is a list of Home Assistant MQTT discovery entries plus metadata:
 ```
 
 Discovery object IDs are semantic slugs derived from the entity name (for
-example `Status` → `status`, `Charge current` → `charge_current`), lowercased
+example `Status` → `status`, `Battery level` → `battery_level`), lowercased
 and separated with underscores. The base prefixes them with `pack_` when
 publishing.
 
@@ -134,9 +134,9 @@ Limits:
 
 Large discovery configs are published as one MQTT message. Set the base
 **MQTT buffer size** to at least 8192 bytes; a 2048-byte buffer silently
-rejects configs such as the Feyree Charge current entity, leaving HA on a
-stale/old entity. After changing the buffer, reboot the base and reload the HA
-MQTT integration if needed.
+rejects large discovery configs, leaving HA on a stale/old entity. After
+changing the buffer, reboot the base and reload the HA MQTT integration if
+needed.
 
 The base sketch contains a custom `partitions.csv`:
 
