@@ -1,8 +1,8 @@
 # Third-party notices
 
-This project contains material derived from **tuya-local**. Those portions are
-licensed under the MIT License below. The rest of this repository remains under
-the Unlicense; see [`LICENSE`](LICENSE).
+This project is licensed under the MIT License; see [`LICENSE`](LICENSE). It
+contains material derived from **tuya-local**. Those portions are licensed under
+the MIT License below and retain their upstream copyright.
 
 ## tuya-local
 

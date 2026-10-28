@@ -194,4 +194,4 @@ profile. The raw-DP sensor remains the complete view of every DP.
 
 The converter, mapping engine and generated catalog include material derived from
 tuya-local under the MIT License. See [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
-The rest of the project is Unlicense.
+The project is MIT licensed; see [`../LICENSE`](../LICENSE).
