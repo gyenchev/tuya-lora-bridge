@@ -272,3 +272,41 @@ The base publishes `tuya-lora/<slug>/link` on every valid LoRa frame and every
 The diagnostics are independent of the device state. RSSI and SNR are available
 before the first DP snapshot succeeds. The device state remains `unknown` until a
 snapshot is received.
+
+## Local transfer telemetry
+
+The base also keeps local link counters for the web UI. They are exposed only in
+`/api/status` under `lora_stats` and on the **LoRa** tab at `/lora`; they are
+**not** published to MQTT or Home Assistant, and they require no remote-node
+update.
+
+The counters include:
+
+- configured PHY: frequency, spreading factor, bandwidth, coding rate, preamble,
+  TX power and the nominal LoRa bitrate;
+- RX/TX frame counts and wire bytes (complete encrypted frames);
+- RX/TX decoded payload bytes;
+- active RX/TX burst rates: frame count, wire/payload bytes and duration for
+  consecutive frames, with wire and payload bytes per second. The last burst is
+  held after it ends, so a once-a-minute snapshot does not decay to zero while
+  idle;
+- the last RX/TX frame size, payload size, airtime, instantaneous wire/payload
+  speed and RSSI/SNR;
+- a rolling 60-minute duty-cycle window: base TX airtime, observed remote TX
+  airtime, combined airtime, percentages against the fixed 3600-second window,
+  and remaining airtime against the 1% reference budget;
+- completed/failed DP snapshots, the last snapshot's payload bytes, chunks,
+  duration and effective payload bytes per second;
+- per-message RX/TX counts;
+- decode failures, replay drops and failed transmissions.
+
+The airtime and rate values are estimates based on the base's radio settings;
+both nodes must use the same PHY configuration, as required by the link. Counters
+reset when the base boots or reinitializes the radio.
+
+The duty percentages use a fixed one-hour denominator, not the time since boot,
+so a short boot-time snapshot does not falsely appear to exceed the limit. The
+`rx_percent` value is the remote's transmit duty as observed by the base; the
+base's own transmitter is `tx_percent`. The 1% limit shown in the UI is the EU
+868.0–868.6 MHz reference; if you use another band, compare the displayed
+percentages with that band's limit.

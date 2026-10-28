@@ -32,6 +32,7 @@
 #include "entities.h"
 #include "ha_discovery.h"
 #include "lora_protocol.h"
+#include "lora_stats.h"
 #include "profiles.h"
 #include "sd_update.h"
 #include "web_ui.h"
@@ -44,6 +45,7 @@ PubSubClient mqtt(wifiClient);
 
 LoraCodec codec;
 ReplayGuard replay;
+LoraStats loraStats;
 
 StatusData lastStatus;
 bool haveState = false;
@@ -340,6 +342,11 @@ void drawScreen() {
 // LoRa
 // ---------------------------------------------------------------------------
 void initRadio() {
+  loraStats.configure(settings.loraSf, settings.loraBandwidthHz,
+                      settings.loraCodingRate, settings.loraPreamble,
+                      settings.loraTxPower, settings.loraFrequencyMhz);
+  loraStats.reset(millis());
+
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
   LoRa.setPins(LORA_CS, LORA_RST, LORA_DIO0);
 
@@ -369,6 +376,8 @@ void initRadio() {
 }
 
 void handleFrame(const uint8_t *frame, size_t len, int rssi, float snr) {
+  loraStats.noteRx(len, rssi, snr, millis());
+
   uint8_t type = 0;
   uint8_t flags = 0;
   uint32_t seq = 0;
@@ -378,14 +387,18 @@ void handleFrame(const uint8_t *frame, size_t len, int rssi, float snr) {
 
   if (!codec.decode(frame, len, DIR_REMOTE_TO_BASE, type, flags, seq, bootId,
                      payload, payloadLen)) {
+    loraStats.noteRxDecodeError();
     Serial.printf("[lora] bad frame len=%u\n", (unsigned)len);
     return;
   }
+  loraStats.noteRxPayload(payloadLen);
+  loraStats.noteRxType(type);
 
   // ACKs are idempotent and may be re-sent after a command retry. Other frame
   // types must be strictly monotonic per boot_id.
   const bool fresh = replay.accept(bootId, seq);
   if (!fresh && type != MSG_ACK) {
+    loraStats.noteRxReplayDrop();
     Serial.printf("[lora] replay/drop boot=%08lX seq=%lu\n",
                   (unsigned long)bootId, (unsigned long)seq);
     return;
@@ -518,9 +531,12 @@ bool sendLoraCommand(uint8_t type, const uint8_t *payload, size_t payloadLen) {
   LoRa.receive();
 
   if (ok) {
+    loraStats.noteTx(frameLen, payloadLen, millis());
+    loraStats.noteTxType(type);
     Serial.printf("[lora] tx type=0x%02X seq=%lu len=%u\n", type,
                   (unsigned long)seq, (unsigned)frameLen);
   } else {
+    loraStats.noteTxFailed();
     Serial.println("[lora] tx failed");
   }
   return ok;
@@ -930,6 +946,7 @@ void finalizeDpJson() {
   Serial.printf("[dp] complete req=%u bytes=%u chunks=%u\n", dpReqId,
                 (unsigned)total, dpChunkCount);
 
+  loraStats.noteDpComplete(true, millis());
   sendDpAck();
   dpQueryPending = false;
   nextDpQueryMs = millis() + settings.dpQueryIntervalMs;
@@ -956,9 +973,11 @@ void handleDpChunk(const uint8_t *payload, size_t payloadLen) {
   if (offset >= DP_MAX_JSON) return;
   if (offset + dataLen > DP_MAX_JSON) dataLen = DP_MAX_JSON - offset;
 
+  const bool newChunk = (dpRxBitmap & (1UL << index)) == 0;
   memcpy(dpJson + offset, payload + 4, dataLen);
   dpChunkLen[index] = static_cast<uint8_t>(dataLen);
   dpRxBitmap |= (1UL << index);
+  if (newChunk) loraStats.noteDpChunk(dataLen);
   dpLastChunkMs = millis();
   dpLastAckMs = millis();
   dpAckAttempts = 0;
@@ -998,6 +1017,7 @@ void sendDpQuery() {
     return;
   }
 
+  loraStats.noteDpStart(dpQueryStartedMs);
   Serial.printf("[dp] query req=%u\n", dpReqId);
 }
 
@@ -1019,6 +1039,7 @@ void serviceDpQuery() {
     if ((now - dpQueryStartedMs) >= settings.dpQueryTimeoutMs) {
       Serial.printf("[dp] timeout req=%u chunks=%u bitmap=0x%08lX\n", dpReqId,
                     dpChunkCount, (unsigned long)dpRxBitmap);
+      loraStats.noteDpComplete(false, now);
       dpQueryPending = false;
       nextDpQueryMs = now + settings.dpQueryIntervalMs;
     }
