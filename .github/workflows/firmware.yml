@@ -1,0 +1,190 @@
+name: Firmware build and release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build firmware
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Regenerate and verify embedded web assets
+        run: |
+          node web/build_assets.mjs
+          if ! git diff --exit-code -- firmware/base-node/web_assets.cpp firmware/base-node/web_assets.h; then
+            echo "::error::web_assets.cpp/.h are stale. Run 'node web/build_assets.mjs' and commit the result."
+            exit 1
+          fi
+
+      - name: Set up Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+        with:
+          version: "1.1.1"
+
+      - name: Cache Arduino core and libraries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino/libraries
+          key: arduino-${{ runner.os }}-esp32-3.1.0-${{ hashFiles('.github/workflows/firmware.yml') }}
+          restore-keys: |
+            arduino-${{ runner.os }}-esp32-3.1.0-
+
+      - name: Install ESP32 core and libraries
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls \
+            https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.1.0
+          arduino-cli lib install \
+            "LoRa@0.8.0" \
+            "Adafruit GFX Library@1.11.11" \
+            "Adafruit SSD1306@2.5.13" \
+            "Adafruit BusIO@1.17.0" \
+            "ArduinoJson@7.2.1" \
+            "PubSubClient@2.8.0"
+
+      - name: Build remote node
+        run: |
+          arduino-cli compile \
+            --fqbn "esp32:esp32:ttgo-lora32:Revision=TTGO_LoRa32_v21new,UploadSpeed=460800" \
+            --output-dir "$RUNNER_TEMP/build-remote" \
+            firmware/remote-node
+
+      - name: Build base node
+        run: |
+          arduino-cli compile \
+            --fqbn "esp32:esp32:ttgo-lora32:Revision=TTGO_LoRa32_v21new,UploadSpeed=460800" \
+            --build-property "upload.maximum_size=1835008" \
+            --output-dir "$RUNNER_TEMP/build-base" \
+            firmware/base-node
+
+      - name: Collect release assets
+        run: |
+          set -euo pipefail
+          DIST="$RUNNER_TEMP/firmware-dist"
+          mkdir -p "$DIST"
+
+          cp "$RUNNER_TEMP/build-base/base-node.ino.bin" "$DIST/base-node.bin"
+          cp "$RUNNER_TEMP/build-base/base-node.ino.merged.bin" "$DIST/base-node-full.bin"
+          cp "$RUNNER_TEMP/build-remote/remote-node.ino.bin" "$DIST/remote-node.bin"
+          cp "$RUNNER_TEMP/build-remote/remote-node.ino.merged.bin" "$DIST/remote-node-full.bin"
+
+          BASE_VERSION="$(sed -n 's/^#define FW_VERSION "\(.*\)"/\1/p' firmware/base-node/config.h)"
+          REMOTE_VERSION="$(sed -n 's/^#define FW_VERSION "\(.*\)"/\1/p' firmware/remote-node/config.h)"
+          if [ "$BASE_VERSION" != "$REMOTE_VERSION" ]; then
+            echo "::error::Base and remote FW_VERSION values differ: $BASE_VERSION vs $REMOTE_VERSION"
+            exit 1
+          fi
+
+          cat > "$DIST/README.txt" <<EOF
+          Tuya LoRa Bridge firmware
+          Version: $BASE_VERSION
+          Commit:  $GITHUB_SHA
+          Built:   $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          SD-card update images (copy to the card root):
+            base-node.bin
+            remote-node.bin
+
+          Full 4 MB USB flash images (bootloader + partition table + app):
+            base-node-full.bin
+            remote-node-full.bin
+
+          Verify the downloads with:
+            sha256sum -c SHA256SUMS.txt        # Linux
+            shasum -a 256 -c SHA256SUMS.txt    # macOS
+          EOF
+
+          (cd "$DIST" && sha256sum *.bin > SHA256SUMS.txt)
+          ls -lh "$DIST"
+
+      - name: Upload firmware bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ github.sha }}
+          path: ${{ runner.temp }}/firmware-dist
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download firmware bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-${{ github.sha }}
+          path: dist
+
+      - name: Resolve version and tag
+        id: meta
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^#define FW_VERSION "\(.*\)"/\1/p' firmware/base-node/config.h)"
+          short_sha="${GITHUB_SHA::7}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version-$short_sha" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version-$short_sha"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Tuya LoRa Bridge ${{ steps.meta.outputs.version }} (${{ steps.meta.outputs.short_sha }})
+          target_commitish: ${{ github.sha }}
+          body: |
+            Automated firmware build for commit `${{ github.sha }}`.
+
+            **SD-card update images** — copy to the card root:
+            - `base-node.bin`
+            - `remote-node.bin`
+
+            **Full USB flash images** — bootloader, partition table and app:
+            - `base-node-full.bin`
+            - `remote-node-full.bin`
+
+            Verify the assets with `SHA256SUMS.txt`. See the firmware README for
+            flashing and first-start instructions.
+          files: dist/*
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          make_latest: true
+          draft: false
+          prerelease: false
