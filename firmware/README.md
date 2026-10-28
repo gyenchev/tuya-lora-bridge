@@ -76,24 +76,34 @@ copies synchronized.
 ## Build and flash
 
 ```bash
-REMOTE_FQBN=esp32:esp32:ttgo-lora32:UploadSpeed=460800
-BASE_FQBN=esp32:esp32:ttgo-lora32:PartitionScheme=min_spiffs,UploadSpeed=460800
+REMOTE_FQBN=esp32:esp32:ttgo-lora32:Revision=TTGO_LoRa32_v21new,UploadSpeed=460800
+BASE_FQBN=esp32:esp32:ttgo-lora32:Revision=TTGO_LoRa32_v21new,UploadSpeed=460800
 PORT=/dev/cu.usbserial-REPLACE_ME
 LIBS="$HOME/Documents/Arduino/libraries"
 
 arduino-cli compile --fqbn "$REMOTE_FQBN" --libraries "$LIBS" firmware/remote-node
 arduino-cli upload  --fqbn "$REMOTE_FQBN" --libraries "$LIBS" -p "$PORT" firmware/remote-node
 
-arduino-cli compile --fqbn "$BASE_FQBN" --libraries "$LIBS" firmware/base-node
+arduino-cli compile --fqbn "$BASE_FQBN" --build-property "upload.maximum_size=1835008" --libraries "$LIBS" firmware/base-node
 arduino-cli upload  --fqbn "$BASE_FQBN" --libraries "$LIBS" -p "$PORT" firmware/base-node
 ```
 
 `UploadSpeed=460800` is reliable on the TTGO LoRa32 boards used for this
 project. The base sketch contains its own `partitions.csv` (two 1.75 MB OTA app
 partitions and 384 KB LittleFS); it overrides the FQBN partition scheme
-automatically. Back up NVS at `0x9000`/`0x5000` before the first switch to this
-table. If upload fails, hold **BOOT**, press **RESET**, release **BOOT**, and
-retry at a lower speed.
+automatically. Because the board definition still has a 1.25 MB default size
+check, the base compile passes `upload.maximum_size=1835008`; this does not
+change the partition table. Back up NVS at `0x9000`/`0x5000` before the first
+switch to this table. If upload fails, hold **BOOT**, press **RESET**, release
+**BOOT**, and retry at a lower speed.
+
+## Automated builds and releases
+
+The GitHub Actions workflow in `.github/workflows/firmware.yml` builds both
+sketches for pull requests. A push to `main` additionally publishes a release
+with the application images and full 4 MB flash images. The release tag is
+`v<FW_VERSION>-<short-sha>`; repeated runs for the same commit update the same
+release.
 
 ## First start
 

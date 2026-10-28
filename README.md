@@ -180,17 +180,35 @@ Use Arduino ESP32 core 3.1.0 and the libraries listed in
 partition scheme selected by the FQBN is overridden by the custom table.
 
 ```bash
-REMOTE_FQBN=esp32:esp32:ttgo-lora32:UploadSpeed=460800
-BASE_FQBN=esp32:esp32:ttgo-lora32:PartitionScheme=min_spiffs,UploadSpeed=460800
+REMOTE_FQBN=esp32:esp32:ttgo-lora32:Revision=TTGO_LoRa32_v21new,UploadSpeed=460800
+BASE_FQBN=esp32:esp32:ttgo-lora32:Revision=TTGO_LoRa32_v21new,UploadSpeed=460800
 PORT=/dev/cu.usbserial-REPLACE_ME
 LIBS="$HOME/Documents/Arduino/libraries"
 
 arduino-cli compile --fqbn "$REMOTE_FQBN" --libraries "$LIBS" firmware/remote-node
 arduino-cli upload  --fqbn "$REMOTE_FQBN" --libraries "$LIBS" -p "$PORT" firmware/remote-node
 
-arduino-cli compile --fqbn "$BASE_FQBN" --libraries "$LIBS" firmware/base-node
+arduino-cli compile --fqbn "$BASE_FQBN" --build-property "upload.maximum_size=1835008" --libraries "$LIBS" firmware/base-node
 arduino-cli upload  --fqbn "$BASE_FQBN" --libraries "$LIBS" -p "$PORT" firmware/base-node
 ```
+
+The base FQBN has a smaller default size check than the custom `partitions.csv`;
+`upload.maximum_size=1835008` tells the compiler to use the 1.75 MB OTA slot.
+The partition table itself still comes from `firmware/base-node/partitions.csv`.
+
+### Automated firmware releases
+
+[`.github/workflows/firmware.yml`](.github/workflows/firmware.yml) builds both
+sketches on every pull request. On a push to `main` it also publishes a GitHub
+release tagged `v<FW_VERSION>-<short-sha>` with:
+
+- `base-node.bin` and `remote-node.bin` for SD-card updates;
+- `base-node-full.bin` and `remote-node-full.bin` for full USB flashing;
+- `SHA256SUMS.txt` for integrity checks.
+
+The workflow regenerates the embedded profile assets and fails if the committed
+`web_assets.cpp/.h` files are out of date, so run `node web/build_assets.mjs`
+before committing web asset changes.
 
 When a node has no saved configuration, it starts a setup AP:
 
