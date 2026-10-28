@@ -122,8 +122,8 @@ function tokenizeProfile(profile) {
     [info?.state_topic, '__STATE_TOPIC__'],
     [info?.command_topic, '__CMD_TOPIC__'],
     [info?.raw_entity_id, '__RAW_ENTITY__'],
-    ['tuya-lora/charger/dps', '__STATE_TOPIC__'],
-    ['tuya-lora/charger/command/dp', '__CMD_TOPIC__'],
+    ['tuya-lora/device/dps', '__STATE_TOPIC__'],
+    ['tuya-lora/device/command/dp', '__CMD_TOPIC__'],
   ];
   for (const [from, to] of pairs) {
     if (from) text = text.split(from).join(to);
@@ -372,7 +372,8 @@ $('search').addEventListener('input', renderOnline);
 )A_HTML";
 
 const char PROFILE_CONVERTER_JS[] PROGMEM =
-R"A_JS(// Shared tuya-local -> Tuya LoRa browser profile converter.
+R"A_JS(// Portions derived from tuya-local (MIT). See THIRD_PARTY_NOTICES.md.
+// Shared tuya-local -> Tuya LoRa browser profile converter.
 // Used by the browser builder and by the Node catalog generator.
 //
 // The converter emits precompiled HA MQTT discovery configs. The ESP32 only
@@ -2726,7 +2727,8 @@ export function supportInfo(yaml, meta = {}) {
 )A_JS";
 
 const char PROFILE_MAPPING_JS[] PROGMEM =
-R"A_MAP(// Jinja code generation for tuya-local DP mappings.
+R"A_MAP(// Portions derived from tuya-local (MIT). See THIRD_PARTY_NOTICES.md.
+// Jinja code generation for tuya-local DP mappings.
 //
 // The generated templates run in Home Assistant. State templates read the raw
 // DP snapshot (`value_json.dps`). Command templates read the current snapshot

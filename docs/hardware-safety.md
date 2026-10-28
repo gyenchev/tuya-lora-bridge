@@ -43,7 +43,7 @@ No relays, contactors, CT clamps or mains wiring are part of this project.
 
 - Mount the remote node outside the device in its own IP65 enclosure.
 - Keep the 868 MHz antenna vertical and clear of metal, mains cables, inverters,
-  RCD/RCBOs and the device's electronics.
+  protective devices and the device's electronics.
 - Do not coil the antenna against the enclosure. Use an external antenna or a
   plastic enclosure with the antenna standing upright.
 - Separate the WiFi and LoRa antennas as much as the board allows.
@@ -62,44 +62,42 @@ Before outdoor installation:
 3. Verify Tuya TCP and DP reads.
 4. Verify LoRa status and ACK at short range.
 5. Verify MQTT discovery in Home Assistant.
-6. Confirm that no command starts charging unexpectedly.
+6. Confirm that the device stays in its local state and no command changes it
+   unexpectedly.
 7. Install only after the bench checks pass.
 
-## EVSE safety
+## Mains-powered device safety
 
 The device is mains-powered equipment. This project does not require opening it.
 
 - Do not open the device, remove covers or touch internal wiring unless you are
   qualified and the unit is fully isolated.
-- Do not bypass or modify the RCD/RCBO, protective earth, control pilot (CP) or
-  proximity pilot (PP) circuits.
-- Do not use a DIY relay or contactor to interrupt mains to the device. EV
-  charging has a controlled shutdown sequence; cutting mains under load is not a
-  safe control method.
+- Do not bypass or modify the device's protective devices, safety interlocks or
+  earth connections.
+- Do not use a DIY relay or contactor to interrupt mains to the device. Equipment
+  with a controlled shutdown sequence must not be switched off under load.
 - Do not connect the ESP32 to the device's internal UART, display, buttons or
-  RFID reader.
+  other local interfaces.
 - Use only the device's network API.
-- The device's local protections, RCD/RCBO and control pilot remain
-  authoritative. The bridge must never be the only thing preventing an unsafe
-  condition.
+- The device's local protections and safety functions remain authoritative. The
+  bridge must never be the only thing preventing an unsafe condition.
 - Have a qualified electrician inspect the final installation if you are not
-  qualified to work on EVSE equipment.
+  qualified to work on mains-powered equipment.
 
 ## Remote-control safety rules
 
 The firmware and Home Assistant configuration must preserve these rules:
 
 - **No auto-start on boot.** After a power cut, reboot or link recovery, the
-  device stays in its local state. Only an explicit command starts a session.
+  device stays in its local state. Only an explicit command changes it.
 - **No auto-start on Home Assistant restart.** The base does not replay old
   commands.
-- **Validate current** against the configured model limit, for example 6–32 A
-  or 6–16 A for `Max16A` models. Reject out-of-range values.
-- **Do not start** when the device reports a fault, no vehicle, or waiting for
-  authorization.
-- **Do not stop** when already stopped; avoid needless relay cycles.
-- **Rate-limit** current changes and start/stop commands.
-- **Link loss does nothing.** Do not issue an automatic stop or start when LoRa
+- **Validate command ranges** against the limits in the active profile. Reject
+  out-of-range or malformed values.
+- **Respect device faults.** Do not send commands while the device reports a
+  fault or is in a state that does not accept them.
+- **Rate-limit** repeated changes.
+- **Link loss does nothing.** Do not issue an automatic command when LoRa
   disappears. The device continues its local behavior.
 - **Only accept authenticated commands** with a valid AES-GCM tag and a fresh
   sequence number.
@@ -159,7 +157,7 @@ The firmware and Home Assistant configuration must preserve these rules:
 
 - Do not put the ESP32 inside the device.
 - Do not power the ESP32 from the device's control board.
-- Do not use the device's RFID, buttons or CP lines as a control interface.
+- Do not use the device's local interfaces as a control path.
 - Do not use a relay to cut mains.
 - Do not expose the ESP32 AP to the internet.
 - Do not rely on the bridge for fault protection or emergency stop.

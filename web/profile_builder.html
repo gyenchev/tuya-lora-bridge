@@ -117,8 +117,8 @@ function tokenizeProfile(profile) {
     [info?.state_topic, '__STATE_TOPIC__'],
     [info?.command_topic, '__CMD_TOPIC__'],
     [info?.raw_entity_id, '__RAW_ENTITY__'],
-    ['tuya-lora/charger/dps', '__STATE_TOPIC__'],
-    ['tuya-lora/charger/command/dp', '__CMD_TOPIC__'],
+    ['tuya-lora/device/dps', '__STATE_TOPIC__'],
+    ['tuya-lora/device/command/dp', '__CMD_TOPIC__'],
   ];
   for (const [from, to] of pairs) {
     if (from) text = text.split(from).join(to);

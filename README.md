@@ -12,11 +12,10 @@ reach the home WiFi, but it does not modify the device or its mains wiring.
 
 The remote node is a raw Tuya DP proxy. The base node owns the DP-to-entity map,
 so many common Tuya devices can be described with a tuya-local-style JSON
-descriptor without changing the firmware. Built-in Feyree and F-OBZ2 profiles
-are provided as compatibility examples and can be replaced by custom
-descriptors.
+descriptor without changing the firmware. The profile can be replaced at any
+time from the browser catalog or the JSON editor.
 
-- **Firmware version:** 0.4.0
+- **Firmware version:** 0.5.0
 - **Radio band:** 868 MHz (EU)
 - **LoRa link:** AES-128-GCM authenticated and encrypted
 - **Home Assistant:** MQTT discovery, no custom integration
@@ -69,7 +68,7 @@ The Tuya device stays on its own local protections and schedules.
   when a platform cannot express it natively.
 - Profile-driven **Device telemetry** on the status page, with a raw-DP fallback;
   the top status tiles are limited to link/profile data and the base OLED shows
-  device availability and the active profile instead of charger-only rows.
+  device availability and the active profile.
 - Base-local LoRa transfer telemetry in the **LoRa** tab: per-frame and burst
   speeds, wire/payload byte counts, DP snapshot speed, message mix and a rolling
   60-minute duty-cycle view. It is not published to MQTT or Home Assistant.
@@ -134,15 +133,15 @@ tuya-lora-bridge/
     │   ├── config.h
     │   ├── config_store.cpp
     │   ├── config_store.h
-    │   ├── entities.cpp
-    │   ├── entities.h
     │   ├── ha_discovery.cpp
     │   ├── ha_discovery.h
     │   ├── lora_protocol.cpp
     │   ├── lora_protocol.h
+    │   ├── lora_stats.cpp
+    │   ├── lora_stats.h
+    │   ├── lora_trial.cpp
+    │   ├── lora_trial.h
     │   ├── partitions.csv
-    │   ├── profiles.cpp
-    │   ├── profiles.h
     │   ├── sd_update.cpp
     │   ├── sd_update.h
     │   ├── web_assets.cpp
@@ -260,7 +259,7 @@ Request a fresh snapshot:
 mosquitto_pub -t tuya-lora/<slug>/command/query -m query
 ```
 
-The retained `tuya-lora/<slug>/state` and `tuya-lora/<slug>/link` topics should
+The retained `tuya-lora/<slug>/dps` and `tuya-lora/<slug>/link` topics should
 update, and Home Assistant should create the entities described in
 [`docs/home-assistant.md`](docs/home-assistant.md).
 
@@ -299,14 +298,14 @@ Keep the card inserted until the update finishes.
 The base node publishes ordinary MQTT topics and retained discovery configs.
 There is no custom component. The topic prefix is derived from the Home
 Assistant device name: `tuya-lora/<slug>/...`, where `<slug>` is the lower-case,
-underscore-separated name (for example `CarCharger` becomes `carcharger`).
+underscore-separated name (for example `Workshop Sensor` becomes
+`workshop_sensor`).
 Changing the name changes the topics and Home Assistant entity IDs; the base
 clears the old discovery entries and republishes the profile with resolved
 placeholders. The main topics are:
 
 | Topic | Purpose |
 |---|---|
-| `tuya-lora/<slug>/state` | mapped state JSON |
 | `tuya-lora/<slug>/link` | RSSI, SNR, age and last-seen diagnostics |
 | `tuya-lora/<slug>/dps` | raw Tuya DP snapshot |
 | `tuya-lora/<slug>/availability` | `online` / `offline` |
@@ -322,8 +321,8 @@ payloads, automations and troubleshooting.
 This project does not open the device or touch its mains wiring. It uses only
 the Tuya network API.
 
-- The device's own protections remain authoritative. For an EV charger, this
-  includes the RCD/RCBO, control pilot and local protections.
+- The device's own protections remain authoritative. For high-power equipment,
+  this includes its local protective devices and safety interlocks.
 - Do not bypass or modify protective earth, RCD/RCBO, CP or PP circuits.
 - Do not use a DIY relay or contactor to interrupt mains.
 - The bridge must never be the only safeguard against an unsafe condition.
@@ -341,7 +340,7 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
   trusted network.
 - Use a dedicated MQTT user limited to the bridge topics.
 - Treat `tuya-lora/<slug>/command/*` as privileged: any MQTT client that can
-  publish there can control charging.
+  publish there can control the device.
 - Do not expose MQTT or Home Assistant to the internet without TLS and
   authentication or a VPN.
 - The firmware does not log credentials.
@@ -388,7 +387,7 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 | [`docs/tuya-device.md`](docs/tuya-device.md) | Tuya local API, key retrieval, reference DP maps and the profile JSON model |
 | [`docs/lora-protocol.md`](docs/lora-protocol.md) | Frame format, messages, ACKs, encryption and airtime |
 | [`docs/home-assistant.md`](docs/home-assistant.md) | MQTT topics, discovery, entities, automations and dashboards |
-| [`docs/hardware-safety.md`](docs/hardware-safety.md) | BOM, power, enclosure, radio rules and EVSE safety |
+| [`docs/hardware-safety.md`](docs/hardware-safety.md) | BOM, power, enclosure, radio rules and electrical safety |
 | [`docs/testing.md`](docs/testing.md) | Validation matrix, acceptance checks and known limitations |
 | [`web/README.md`](web/README.md) | Browser profile catalog, JSON editor, converter and catalog generation |
 | [`firmware/README.md`](firmware/README.md) | Build, flash, web UI settings, SD updates and board notes |
@@ -404,8 +403,8 @@ and retain their upstream copyright. See
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 This project is **100% vibecoded / AI-generated** and is not a certified
-controller or safety device for any application. It can control EV chargers and
-other Tuya devices, but the supported profile set can change at any time. The
+controller or safety device for any application. It can control compatible Tuya
+devices, but the supported profile set can change at any time. The
 author is not responsible for any damage to hardware, software, property, or
 persons. Use it at your own risk and read [`DISCLAIMER.md`](DISCLAIMER.md). Use
 it only with equipment that keeps its own safety and protective functions, and

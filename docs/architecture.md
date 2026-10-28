@@ -71,14 +71,12 @@ interrupts its mains supply.
 
 - Sends `DP_QUERY` every 60 seconds, verifies AES-GCM and replay protection,
   reassembles chunks, and acknowledges the chunk bitmap.
-- Detects the DP profile, or uses the manual profile selected in NVS, maps it to
-  a stable state model, and publishes the raw snapshot to retained
-  `tuya-lora/<slug>/dps`.
-- Publishes retained `tuya-lora/<slug>/state`, `tuya-lora/<slug>/link` and
+- Publishes the raw snapshot to retained `tuya-lora/<slug>/dps` and the
+  per-DP topics.
+- Publishes retained `tuya-lora/<slug>/link` and
   `tuya-lora/<slug>/availability` topics.
-- Stores one active browser profile and an internal read-only fallback map
-  browser-generated profile pack. A browser pack is precompiled discovery plus
-  command templates; the remote stays a raw DP proxy.
+- Stores one active browser profile pack. A browser pack is precompiled
+  discovery plus command templates; the remote stays a raw DP proxy.
 - The browser converts any tuya-local descriptor into a pack using native MQTT
   platforms (light, fan, cover, climate, water heater, humidifier, lock,
   alarm, siren, valve, event, time/datetime, lawn mower, camera, sensor,
@@ -91,9 +89,8 @@ interrupts its mains supply.
   and one retained per-DP topic under the raw snapshot topic. Every DP remains
   available even when a platform cannot express it natively.
 - Subscribes to the generic DP command topic. Command templates emit a JSON
-  `dps` fragment, which the base forwards to `DP_SET`.
-  are mapped by the base. Control is rejected when the selected pack does not
-  match the last snapshot.
+  `dps` fragment, which the base forwards to `DP_SET`. Control is rejected when
+  no profile is loaded or no snapshot has been seen.
 - Publishes precompiled Home Assistant MQTT discovery configs from the pack and
   clears stale entities when the active profile changes.
 - Serves a live status page and settings UI on the home WiFi.
@@ -104,8 +101,8 @@ interrupts its mains supply.
 ### Home Assistant
 
 Home Assistant provides the MQTT broker and consumes the discovery entities. No
-custom integration is required. Automations can use the state, availability and
-link diagnostics for monitoring, notifications and slow charging control.
+custom integration is required. Automations can use the snapshot, availability and
+link diagnostics for monitoring, notifications and slow control.
 
 ## Data flow
 
@@ -159,22 +156,22 @@ Remote node                         Base node
      │◄─── DP_QUERY req=7 ──────────────│
      │──── DP_CHUNK 0..n ──────────────►│
      │◄─── DP_ACK bitmap ───────────────│
-     │                                  │──► MQTT dps + state + availability
+     │                                  │──► MQTT dps + availability
 ```
 
 ### Command
 
 ```text
 HA          Base node                    Remote node
- │  charge ON    │                            │
- │──────────────►│                            │
- │               │──── DP_SET seq=41 ────────►│
- │               │      {"124":"OpenCharging"}│
- │               │◄─── ACK seq=41 ok ─────────│
- │               │──► MQTT result             │
- │               │──── DP_QUERY (after 500ms) ►│
- │               │◄─── DP_CHUNK ... ──────────│
- │               │──► MQTT state refresh      │
+ │  dp command    │                            │
+ │───────────────►│                            │
+ │                │──── DP_SET seq=41 ────────►│
+ │                │      {"1":true}            │
+ │                │◄─── ACK seq=41 ok ─────────│
+ │                │──► MQTT result             │
+ │                │──── DP_QUERY (after 500ms) ►│
+ │                │◄─── DP_CHUNK ... ──────────│
+ │                │──► MQTT dps refresh        │
 ```
 
 ### Link loss

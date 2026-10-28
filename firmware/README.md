@@ -25,15 +25,15 @@ firmware/
 │   ├── config_store.h
 │   ├── browser_profile.cpp
 │   ├── browser_profile.h
-│   ├── entities.cpp
-│   ├── entities.h
 │   ├── ha_discovery.cpp
 │   ├── ha_discovery.h
 │   ├── lora_protocol.cpp
 │   ├── lora_protocol.h
+│   ├── lora_stats.cpp
+│   ├── lora_stats.h
+│   ├── lora_trial.cpp
+│   ├── lora_trial.h
 │   ├── partitions.csv
-│   ├── profiles.cpp
-│   ├── profiles.h
 │   ├── sd_update.cpp
 │   ├── sd_update.h
 │   ├── web_assets.cpp
@@ -207,8 +207,8 @@ The threshold and healthy-uptime window are compile-time values in `config.h`:
    AP. When a client is present, the scan services the LoRa link between hosts
    so coordinated configuration is not blocked by discovery.
 
-The remote node does not know which DP means voltage, current or charging. That
-mapping lives on the base node and can be changed without reflashing the remote.
+The remote node does not interpret the DP map. That mapping lives on the base
+node and can be changed without reflashing the remote.
 
 ## Base node behavior
 
@@ -238,8 +238,7 @@ The base **Status** page shows a profile tile, link status and a profile-driven
 **Device telemetry** table; packs without telemetry metadata fall back to raw
 DPs. The **LoRa** page shows per-frame/burst speeds, byte counts, DP snapshot
 speed, message mix and the rolling 60-minute duty cycle. The OLED shows device
-readiness (`available`/`unknown`) and the active profile name instead of
-charger-only status/power rows.
+readiness (`available`/`unknown`) and the active profile name.
 
 The base **LoRa** tab is the authoritative place for radio configuration. It
 offers EU 868-870 MHz presets, dropdowns, a custom frequency field, a generated

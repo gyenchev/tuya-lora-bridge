@@ -44,66 +44,12 @@ enum Direction : uint8_t {
   DIR_BASE_TO_REMOTE = 0x02,
 };
 
-enum StatusCode : uint8_t {
-  ST_UNKNOWN   = 0,
-  ST_AVAILABLE = 1,
-  ST_PLUGGED   = 2,
-  ST_CHARGING  = 3,
-  ST_WAITING   = 4,
-  ST_CHARGED   = 5,
-  ST_FAULT     = 6,
-};
-
 enum AckResult : uint8_t {
   ACK_OK            = 0,
   ACK_REJECTED      = 1,
   ACK_INVALID       = 2,
   ACK_BUSY          = 3,
   ACK_HARDWARE_ERR  = 4,
-};
-
-// ---------------------------------------------------------------------------
-// Base-local decoded state
-// ---------------------------------------------------------------------------
-// This is not a LoRa wire payload. The device sends raw Tuya DP JSON; the
-// base maps it into this struct and publishes the MQTT/HA state from it.
-struct StatusData {
-  uint8_t  status        = ST_UNKNOWN;
-  uint16_t faultFlags    = 0;
-  uint8_t  currentLimit  = 0;
-  uint16_t voltageL1dV   = 0;
-  uint16_t voltageL2dV   = 0;
-  uint16_t voltageL3dV   = 0;
-  uint16_t currentL1dA   = 0;
-  uint16_t currentL2dA   = 0;
-  uint16_t currentL3dA   = 0;
-  uint16_t powerW        = 0;
-  uint32_t energyWh      = 0;
-  uint32_t sessionWh     = 0;
-  int16_t  tempDc        = 0;
-  uint32_t chargeSeconds = 0;
-  bool     rfidActive    = false;
-  bool     scheduleActive = false;
-  bool     chargeEnabled = false;       // raw DP 124 charge-control value
-  bool     waitingForRfid = false;      // device reports wait_rfid
-
-  bool plugged() const {
-    return status == ST_PLUGGED || status == ST_CHARGING ||
-           status == ST_WAITING || status == ST_CHARGED;
-  }
-  bool charging() const { return status == ST_CHARGING; }
-
-  // Session-oriented state for the HA charge switch. DP 124 can stay
-  // OpenCharging from a previous session, so it is ignored while the device
-  // is waiting for RFID authorization.
-  bool chargeSessionEnabled() const {
-    if (status == ST_AVAILABLE || status == ST_CHARGED ||
-        status == ST_FAULT || status == ST_UNKNOWN) {
-      return false;
-    }
-    if (status == ST_WAITING && waitingForRfid) return false;
-    return chargeEnabled;
-  }
 };
 
 struct HelloData {
@@ -134,8 +80,6 @@ struct ConfigAckData {
   uint8_t  result = ACK_INVALID;
   uint16_t detail = 0;
 };
-
-const char *statusName(uint8_t status);
 
 bool   decodeHello(const uint8_t *payload, size_t len, HelloData &out);
 size_t encodeHello(const HelloData &in, uint8_t *out, size_t maxLen);

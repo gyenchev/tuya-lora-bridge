@@ -7,7 +7,6 @@ namespace tuya_lora {
 
 String haSlug(const char *text);
 String mqttTopicPrefix();
-String mqttTopicState();
 String mqttTopicLink();
 String mqttTopicAvailability();
 String mqttTopicDps();

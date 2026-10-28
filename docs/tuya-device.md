@@ -112,8 +112,8 @@ boolean, integer, enum string, string, bitfield or raw.
 
 ## Reference DP maps
 
-The tables below are examples from different Tuya EV charger profiles. A DP
-number is not portable between models. Use them as a starting point only.
+The tables below are examples from two tuya-local device profiles. A DP number
+is not portable between models. Use them as a starting point only.
 
 ### Single-phase profile
 
@@ -121,7 +121,7 @@ From `tuya-local`'s Feyree single-phase profile:
 
 | DP | Type | Meaning | Scale / notes |
 |---:|---|---|---|
-| 3 | string | charger status | optional detail |
+| 3 | string | device status | optional detail |
 | 10 | bitfield | alarm event | fault bits below |
 | 11 | string | alarm set 1 | |
 | 12 | string | alarm set 2 | |
@@ -175,7 +175,7 @@ Feyree three-phase units can use the shared Goodcell/Feyree profile:
 
 | DP | Type | Meaning | Scale / notes |
 |---:|---|---|---|
-| 3 | string | charger status | `charger_free`, `charger_insert`, `charger_free_fault`, `charger_wait`, `charger_charging`, `charger_pause`, `charger_end`, `charger_fault` |
+| 3 | string | device status | `charger_free`, `charger_insert`, `charger_free_fault`, `charger_wait`, `charger_charging`, `charger_pause`, `charger_end`, `charger_fault` |
 | 10 | bitfield | fault | problem binary sensor |
 | 11 / 12 | string | alarm sets | |
 | 14 | string | mode | `charge_now`, `charge_pct`, `charge_energy`, `charge_schedule` |
@@ -291,17 +291,17 @@ The editor uses a single object:
 ```json
 {
   "format": 1,
-  "id": "feyree_43_evcharger",
-  "name": "EV wallbox",
-  "device_type": "Chargers",
-  "source": "tuya-local <commit>/feyree_43_evcharger.yaml",
+  "id": "generic_switch",
+  "name": "Tuya device",
+  "device_type": "Switches & controls",
+  "source": "tuya-local <commit>/example.yaml",
   "telemetry": [
     {
-      "key": "current_limit",
-      "label": "Charge current",
-      "dp": "115",
+      "key": "value",
+      "label": "Value",
+      "dp": "1",
       "kind": "number",
-      "unit": "A"
+      "unit": ""
     }
   ],
   "discovery": [
@@ -367,13 +367,12 @@ last. Limits are 250 KB per upload, 256 discovery entries, 24 KB per entry and
    ```
 
 5. Operate the device while monitoring:
-   - idle, cable unplugged;
-   - cable plugged in, not charging;
-   - start charging;
-   - change current limit;
-   - stop charging;
-   - charging complete;
-   - a safe fault or RFID state if available.
+   - idle;
+   - active or in use;
+   - change a setpoint or mode;
+   - stop;
+   - cycle complete;
+   - a safe fault state if available.
 6. Record each DP with raw value, type, unit/scale, when it changes and whether
    it is writable.
 
@@ -397,7 +396,7 @@ when the cloud is unreachable. Test it before installation:
 
 1. Pair and retrieve the key on a network with internet.
 2. Move the device to an AP with no internet.
-3. Query status and test start/stop/current control from a laptop on that AP.
+3. Query status and test state and control commands from a laptop on that AP.
 
 If local control works offline, the remote AP design is viable. If the device
 drops the AP or stops responding, use a conventional WiFi bridge instead.
