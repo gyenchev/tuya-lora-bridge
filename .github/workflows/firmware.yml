@@ -81,8 +81,10 @@ jobs:
             exit 1
           fi
 
-      - name: Check flasher script
-        run: npm --prefix web run check:flasher
+      - name: Check flasher scripts
+        run: |
+          npm --prefix web run check:flasher
+          python3 -m py_compile web/flasher/build_pages.py
 
       - name: Set up Arduino CLI
         uses: arduino/setup-arduino-cli@v2
@@ -250,7 +252,8 @@ jobs:
             including WiFi, MQTT, Home Assistant and profile settings.
 
             Hosted Web Serial flasher: <https://gyenchev.github.io/tuya-lora-bridge/>  
-            Desktop Chrome/Edge and a USB data cable are required.
+            Desktop Chrome/Edge and a USB data cable are required. The hosted
+            flasher includes the latest 10 releases and lets you choose one.
 
             ### Verify
 
@@ -290,6 +293,8 @@ jobs:
           path: dist
 
       - name: Assemble Pages site
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           SITE="$RUNNER_TEMP/pages-site"
@@ -297,49 +302,10 @@ jobs:
           cp web/flasher/index.html "$SITE/"
           cp web/flasher/flasher.js "$SITE/"
           cp -R web/flasher/vendor "$SITE/vendor"
-          cp dist/base-node-full.bin dist/remote-node-full.bin \
-             dist/SHA256SUMS.txt dist/README.txt "$SITE/firmware/"
 
-          VERSION="${{ needs.version.outputs.version }}" \
-          TAG="${{ needs.version.outputs.tag }}" \
-          COMMIT="$GITHUB_SHA" \
-          BUILT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-          python3 - <<'PY'
-          import hashlib
-          import json
-          import os
-          from pathlib import Path
+          python3 web/flasher/build_pages.py             --site "$SITE"             --dist dist             --current-tag "${{ needs.version.outputs.tag }}"             --version "${{ needs.version.outputs.version }}"             --commit "$GITHUB_SHA"             --built "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-          site = Path(os.environ["RUNNER_TEMP"]) / "pages-site"
-
-          def digest(name):
-              h = hashlib.sha256()
-              with (site / "firmware" / name).open("rb") as f:
-                  for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                      h.update(chunk)
-              return h.hexdigest()
-
-          manifest = {
-              "version": os.environ["VERSION"],
-              "tag": os.environ["TAG"],
-              "commit": os.environ["COMMIT"],
-              "built": os.environ["BUILT"],
-              "assets": {
-                  "base": "base-node-full.bin",
-                  "remote": "remote-node-full.bin",
-              },
-              "sha256": {
-                  "base": digest("base-node-full.bin"),
-                  "remote": digest("remote-node-full.bin"),
-              },
-          }
-          (site / "firmware" / "manifest.json").write_text(
-              json.dumps(manifest, indent=2) + "\n"
-          )
-          print(json.dumps(manifest, indent=2))
-          PY
-
-          find "$SITE" -maxdepth 3 -type f -printf '%P %s bytes\n' | sort
+          find "$SITE/firmware" -maxdepth 2 -type f -printf '%P %s bytes\n' | sort | sed -n '1,80p'
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

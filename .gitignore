@@ -19,3 +19,6 @@ build/
 
 # Profile catalog tooling
 web/node_modules/
+
+# Python cache
+__pycache__/
