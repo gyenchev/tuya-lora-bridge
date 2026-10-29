@@ -595,12 +595,15 @@ void loraConfigToSettings(const LoraConfig &in, BaseSettings &s) {
   s.loraPsk[sizeof(s.loraPsk) - 1] = '\0';
 }
 
-bool loraConfigEquals(const LoraConfig &a, const LoraConfig &b) {
+bool loraConfigLinkEquals(const LoraConfig &a, const LoraConfig &b) {
   return fabsf(a.frequencyMhz - b.frequencyMhz) < 0.0005f &&
-         a.syncWord == b.syncWord && a.txPower == b.txPower &&
-         a.sf == b.sf && a.bandwidthHz == b.bandwidthHz &&
-         a.codingRate == b.codingRate && a.preamble == b.preamble &&
-         strcmp(a.psk, b.psk) == 0;
+         a.syncWord == b.syncWord && a.sf == b.sf &&
+         a.bandwidthHz == b.bandwidthHz && a.codingRate == b.codingRate &&
+         a.preamble == b.preamble && strcmp(a.psk, b.psk) == 0;
+}
+
+bool loraConfigEquals(const LoraConfig &a, const LoraConfig &b) {
+  return loraConfigLinkEquals(a, b) && a.txPower == b.txPower;
 }
 
 bool validateLoraConfig(const LoraConfig &c, String &error) {
@@ -726,6 +729,63 @@ void failBaseLoraConfig(const String &error) {
     loraCfgTrial = LoraTrial{};
   }
   loraCfgPhase = LORA_CFG_ERROR;
+}
+
+bool applyBaseOnlyLoraChange(const LoraConfig &desired, String &error) {
+  if (loraConfigBusy()) {
+    error = "A LoRa configuration change is already in progress.";
+    return false;
+  }
+  if (!validateLoraConfig(desired, error)) return false;
+
+  LoraConfig current;
+  loraConfigFromSettings(settings, current);
+  if (loraConfigEquals(current, desired)) {
+    error = "The LoRa settings are unchanged.";
+    return false;
+  }
+
+  // TX power is local to the base receiver/transmitter. Any other radio
+  // parameter (frequency, modem settings, sync word or PSK) requires the
+  // remote to use the same value, so the link drops until it is updated.
+  const bool linkAffected = !loraConfigLinkEquals(current, desired);
+
+  const BaseSettings old = settings;
+  BaseSettings next = settings;
+  loraConfigToSettings(desired, next);
+  settings = next;
+  if (!saveSettings()) {
+    settings = old;
+    error = "Could not save the new LoRa settings.";
+    return false;
+  }
+
+  // A base-only change is not part of a coordinated two-node trial.
+  loraTrialClear();
+  loraCfgTrial = LoraTrial{};
+  loraCfgPhase = LORA_CFG_IDLE;
+  loraCfgError[0] = '\0';
+
+  if (!applyLoraRuntime()) {
+    settings = old;
+    saveSettings();
+    if (!applyLoraRuntime()) {
+      Serial.println("[lora-cfg] old config reinit failed; restarting");
+      delay(100);
+      ESP.restart();
+    }
+    error = "The new LoRa radio configuration failed to start; the previous "
+            "settings were restored.";
+    return false;
+  }
+
+  if (linkAffected) {
+    remoteOnline = false;
+    publishAvailability();
+    publishLinkState(true);
+  }
+  Serial.println("[lora-cfg] applied to base only");
+  return true;
 }
 
 bool startLoraConfigChange(const LoraConfig &desired, String &error) {
