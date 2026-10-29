@@ -2,15 +2,13 @@
 
 ## Web Serial flasher
 
-`flasher/` contains a Web Serial USB flasher for both boards:
+`flasher/` contains the hosted Web Serial USB flasher for both boards:
 
-- Hosted: <https://gyenchev.github.io/tuya-lora-bridge/>
-- Local: `npm run flasher`, then open <http://localhost:8787/>
+**<https://gyenchev.github.io/tuya-lora-bridge/>**
 
-The hosted page is deployed with the full images from the latest `main` build.
-It can also accept a local `*-full.bin`. Full flashing erases NVS and LittleFS;
-use SD/OTA when settings must be preserved. See
-[`flasher/README.md`](flasher/README.md).
+The GitHub Pages deployment includes the full images from the latest `main`
+build. Full flashing erases NVS and LittleFS; use SD/OTA when settings must be
+preserved. See [`flasher/README.md`](flasher/README.md).
 
 The base node stores only the selected profile pack. The profile editor in the
 browser browses the upstream [tuya-local](https://github.com/make-all/tuya-local)

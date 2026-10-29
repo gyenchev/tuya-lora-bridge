@@ -38,7 +38,7 @@ jobs:
             exit 1
           fi
 
-      - name: Check flasher scripts
+      - name: Check flasher script
         run: npm --prefix web run check:flasher
 
       - name: Set up Arduino CLI

@@ -5,7 +5,6 @@ const FULL_IMAGE_BYTES = 4 * 1024 * 1024;
 const boardEl = document.getElementById('board');
 const latestEl = document.getElementById('latest');
 const releaseEl = document.getElementById('release');
-const fileEl = document.getElementById('file');
 const firmwareEl = document.getElementById('firmware');
 const connectEl = document.getElementById('connect');
 const disconnectEl = document.getElementById('disconnect');
@@ -36,7 +35,6 @@ function setBusy(value) {
   busy = value;
   boardEl.disabled = value;
   latestEl.disabled = value;
-  fileEl.disabled = value;
   connectEl.disabled = value || !!loader;
   disconnectEl.disabled = value || !loader;
   updateFlashButton();
@@ -76,40 +74,15 @@ async function fetchStaticFirmware(board) {
   };
 }
 
-async function fetchServerFirmware(board) {
-  const response = await fetch(`/api/firmware?board=${encodeURIComponent(board)}`, {
-    cache: 'no-store',
-  });
-  if (!response.ok) {
-    throw new Error(`local server HTTP ${response.status}: ${await response.text()}`);
-  }
-  return {
-    data: new Uint8Array(await response.arrayBuffer()),
-    release: response.headers.get('X-Firmware-Release') || 'latest release',
-    sha: response.headers.get('X-Firmware-SHA256') || '',
-  };
-}
-
-async function loadLatest() {
+async function loadFirmware() {
   const board = boardEl.value;
   try {
     setBusy(true);
     clearLog();
-    releaseEl.textContent = 'Fetching firmware...';
+    releaseEl.textContent = 'Fetching bundled firmware...';
+    log('Loading firmware bundled with the GitHub Pages flasher...');
 
-    let result = null;
-    try {
-      log('Trying firmware bundled with the hosted flasher...');
-      result = await fetchStaticFirmware(board);
-    } catch (error) {
-      log(`Bundled firmware unavailable: ${error.message}`);
-    }
-
-    if (!result) {
-      log('Trying the local flasher server...');
-      result = await fetchServerFirmware(board);
-    }
-
+    const result = await fetchStaticFirmware(board);
     if (result.data.byteLength !== FULL_IMAGE_BYTES) {
       throw new Error(`expected a 4 MiB full image, got ${formatBytes(result.data.byteLength)}`);
     }
@@ -118,32 +91,12 @@ async function loadLatest() {
     releaseEl.textContent = `${result.release}${result.sha ? ` · sha256 ${result.sha.slice(0, 12)}…` : ''}`;
     log(`Loaded ${board} full image (${formatBytes(result.data.byteLength)}) from ${result.release}.`);
   } catch (error) {
-    releaseEl.textContent = 'Could not load firmware';
+    releaseEl.textContent = 'Firmware unavailable';
     setFirmware(null, '');
     log(`Firmware load failed: ${error.message}`);
-    log('Choose a local full .bin file, or run the local flasher helper with "npm run flasher".');
+    log('Open the flasher from https://gyenchev.github.io/tuya-lora-bridge/ so the bundled firmware is available.');
   } finally {
     setBusy(false);
-  }
-}
-
-async function loadFile() {
-  try {
-    const file = fileEl.files && fileEl.files[0];
-    if (!file) return;
-    const data = new Uint8Array(await file.arrayBuffer());
-    if (data.byteLength !== FULL_IMAGE_BYTES) {
-      setFirmware(null, '');
-      releaseEl.textContent = 'Local file rejected';
-      log(`Rejected ${file.name}: expected a 4 MiB full image, got ${formatBytes(data.byteLength)}.`);
-      return;
-    }
-    setFirmware(data, file.name);
-    releaseEl.textContent = 'Local file';
-    log(`Loaded local image ${file.name} (${formatBytes(data.byteLength)}).`);
-  } catch (error) {
-    setFirmware(null, '');
-    log(`Could not read file: ${error.message}`);
   }
 }
 
@@ -237,8 +190,7 @@ if (!navigator.serial) {
   connectEl.disabled = true;
 }
 
-latestEl.addEventListener('click', loadLatest);
-fileEl.addEventListener('change', loadFile);
+latestEl.addEventListener('click', loadFirmware);
 connectEl.addEventListener('click', connect);
 disconnectEl.addEventListener('click', disconnect);
 flashEl.addEventListener('click', flash);

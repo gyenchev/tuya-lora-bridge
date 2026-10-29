@@ -12,34 +12,48 @@ the hosted page works without a local server.
 The same page can also run locally for offline use or when you want to fetch the
 latest GitHub release instead.
 
-## Requirements
+## Hosted use
 
-- Desktop Chrome or Edge (Firefox and Safari do not support Web Serial).
-- A data-capable USB cable.
-- Node.js 18 or newer to run the local helper server.
-- The flasher must be opened from `http://localhost`, `http://127.0.0.1`, or an
-  HTTPS origin. Web Serial is not available on a plain LAN `http://` address.
+Open **<https://gyenchev.github.io/tuya-lora-bridge/>** in desktop Chrome or
+Edge. The GitHub Pages deployment bundles the firmware from the latest `main`
+build plus a manifest, so the page does not need a local helper server.
 
-## Run locally
+Web Serial requires a secure context; GitHub Pages serves the page over HTTPS.
 
-```bash
-npm run flasher
+## Flash flow
+
+1. Select **Base node** or **Remote node**.
+2. Click **Load bundled firmware**.
+3. Click **Connect USB** and select the board's serial port.
+4. Tick the confirmation checkbox.
+5. Click **Flash firmware**.
+
+The board is reset after a successful flash.
+
+## Important
+
+This tool writes a **full 4 MB image at address `0x0`** with `eraseAll: true`.
+It erases NVS and LittleFS, including WiFi, MQTT, Home Assistant and profile
+settings. Use the SD-card or `/ota` update path when you want to preserve the
+current configuration.
+
+Only full images are bundled:
+
+```text
+base-node-full.bin
+remote-node-full.bin
 ```
 
-Then open <http://localhost:8787/>.
+The smaller `base-node.bin` and `remote-node.bin` files are application images
+for SD/OTA updates.
 
-The page first tries firmware bundled next to it under `firmware/`. This is how
-the GitHub Pages deployment works.
+If the serial connection fails, hold **BOOT**, tap **RESET**, release **BOOT**,
+and try again.
 
-The local helper server:
+## Deployment
 
-- serves the flasher page and the vendored esptool-js bundle;
-- fetches the latest GitHub release metadata server-side, avoiding browser CORS
-  restrictions;
-- proxies `base-node-full.bin` and `remote-node-full.bin` from that release.
-
-You can also choose a local full image. Images downloaded manually from a
-GitHub release work without the helper server.
+`.github/workflows/firmware.yml` builds both sketches on `main`, copies the full
+images and manifest into the flasher site, and deploys it to GitHub Pages.
 
 ## Flash flow
 

@@ -39,7 +39,7 @@
 
   <div id="unsupported" class="err" hidden>
     This browser does not support Web Serial. Use desktop Chrome or Edge and
-    open the flasher from <code>http://localhost</code> or an HTTPS origin.
+    open the GitHub Pages flasher over HTTPS.
   </div>
 
   <div class="warn">
@@ -58,12 +58,9 @@
     </select>
 
     <div class="row">
-      <button id="latest" type="button">Load latest firmware</button>
+      <button id="latest" type="button">Load bundled firmware</button>
       <span id="release" class="muted">No firmware loaded</span>
     </div>
-
-    <label for="file">Or choose a local full image</label>
-    <input id="file" type="file" accept=".bin,application/octet-stream">
     <p id="firmware" class="muted">No firmware loaded.</p>
   </section>
 

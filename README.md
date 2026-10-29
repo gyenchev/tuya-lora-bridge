@@ -221,15 +221,6 @@ bundled firmware, connect USB, and flash. GitHub Pages publishes the flasher and
 the latest `main` full images together, so no helper server or CORS workaround is
 needed.
 
-For offline use, the same page can be run locally:
-
-```bash
-npm --prefix web run flasher
-```
-
-and opened at `http://localhost:8787/`. The local helper fetches release assets
-server-side; the local file picker works without either backend.
-
 This writes a full 4 MB image and **erases NVS/LittleFS settings**. Use the
 SD-card or `/ota` path when settings must be preserved. See
 [`web/flasher/README.md`](web/flasher/README.md).
