@@ -2104,7 +2104,6 @@ void startSetupAp() {
                 WiFi.softAPIP().toString().c_str(), ok ? "ok" : "FAILED");
 }
 
-constexpr const char *OTA_BOARD = "base";
 bool otaRequestSeen = false;
 bool otaSuccess = false;
 bool otaActive = false;
@@ -2129,11 +2128,6 @@ void handleOtaUpload() {
     otaSuccess = false;
     otaActive = true;
     otaError = "";
-    if (server->arg("board") != String(OTA_BOARD)) {
-      otaError = "wrong board identifier";
-      otaActive = false;
-      return;
-    }
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
       otaError = Update.errorString();
       if (otaError.length() == 0) otaError = "could not start OTA";
