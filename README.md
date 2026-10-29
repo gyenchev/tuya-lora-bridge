@@ -15,7 +15,7 @@ so many common Tuya devices can be described with a tuya-local-style JSON
 descriptor without changing the firmware. The profile can be replaced at any
 time from the browser catalog or the JSON editor.
 
-- **Firmware version:** 0.5.0
+- **Firmware version:** 0.5.x (source base `0.5.0`; CI increments the patch on each `main` build)
 - **Radio band:** 868 MHz (EU)
 - **LoRa link:** AES-128-GCM authenticated and encrypted
 - **Home Assistant:** MQTT discovery, no custom integration
@@ -199,12 +199,19 @@ The partition table itself still comes from `firmware/base-node/partitions.csv`.
 ### Automated firmware releases
 
 [`.github/workflows/firmware.yml`](.github/workflows/firmware.yml) builds both
-sketches on every pull request. On a push to `main` it also publishes a GitHub
-release tagged `v<FW_VERSION>-<short-sha>` with:
+sketches on every pull request. On a push to `main` it computes the next patch
+version, injects it into both `config.h` files for the build, and publishes a
+GitHub release tagged `v<version>` with:
 
 - `base-node.bin` and `remote-node.bin` for SD-card updates;
 - `base-node-full.bin` and `remote-node-full.bin` for full USB flashing;
 - `SHA256SUMS.txt` for integrity checks.
+
+The source version in `config.h` is the base for manual major/minor bumps. The
+pipeline owns the patch number: `0.5.0` becomes `0.5.1`, `0.5.2`, and so on for
+each new `main` merge. If you want a new major or minor line, bump the source
+version in both sketches. Repeated runs for a commit that already has a release
+tag reuse that version.
 
 The workflow regenerates the embedded profile assets and fails if the committed
 `web_assets.cpp/.h` files are out of date, so run `node web/build_assets.mjs`
