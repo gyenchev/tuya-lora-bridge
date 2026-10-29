@@ -100,10 +100,11 @@ switch to this table. If upload fails, hold **BOOT**, press **RESET**, release
 ## Automated builds and releases
 
 The GitHub Actions workflow in `.github/workflows/firmware.yml` builds both
-sketches for pull requests. A push to `main` additionally publishes a release
-with the application images and full 4 MB flash images. The release tag is
-`v<FW_VERSION>-<short-sha>`; repeated runs for the same commit update the same
-release.
+sketches for pull requests. A push to `main` computes the next patch version,
+injects it into both `config.h` files, and publishes a release tagged
+`v<version>` with the application images and full 4 MB flash images. The source
+`FW_VERSION` is the base for manual major/minor bumps; the pipeline increments
+the patch on each new `main` merge and reuses the tag on reruns.
 
 ## First start
 

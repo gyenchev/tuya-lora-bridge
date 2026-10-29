@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tuya LoRa Bridge — Web Serial Flasher</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px; font: 16px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.55rem; margin: 0 0 4px; }
+  h2 { font-size: 1.05rem; margin: 0 0 12px; }
+  .muted { opacity: .7; font-size: .9rem; }
+  .warn { margin: 16px 0; padding: 12px 14px; border: 1px solid #d90; border-radius: 10px; background: #d901; }
+  .err { margin: 16px 0; padding: 12px 14px; border: 1px solid #d33; border-radius: 10px; background: #d33118; color: #fff; }
+  .ok { margin: 16px 0; padding: 12px 14px; border: 1px solid #2a8; border-radius: 10px; background: #2a81; }
+  .card { margin: 16px 0; padding: 16px; border: 1px solid #8884; border-radius: 10px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 10px 0; }
+  .row > * { min-width: 0; }
+  label { display: block; margin: 12px 0 6px; font-weight: 600; }
+  select, input[type=file] { width: 100%; padding: 10px 12px; border: 1px solid #8886; border-radius: 8px; background: transparent; color: inherit; font: inherit; }
+  button { padding: 10px 16px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; font-weight: 650; cursor: pointer; }
+  button.secondary { background: #8883; color: inherit; }
+  button.danger { background: #b91c1c; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .check { display: flex; gap: 8px; align-items: flex-start; margin: 16px 0; font-weight: 400; }
+  .check input { width: 18px; height: 18px; margin-top: 2px; }
+  progress { width: 100%; height: 16px; margin-top: 12px; }
+  pre { white-space: pre-wrap; word-break: break-word; background: #8881; padding: 12px; border-radius: 8px; min-height: 90px; max-height: 280px; overflow: auto; }
+  code { font-size: .9em; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #8882; font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tuya LoRa Bridge — Web Serial Flasher</h1>
+  <p class="muted">Chrome or Edge desktop · USB cable · full 4 MB ESP32 image</p>
+
+  <div id="unsupported" class="err" hidden>
+    This browser does not support Web Serial. Use desktop Chrome or Edge and
+    open the GitHub Pages flasher over HTTPS.
+  </div>
+
+  <div class="warn">
+    <strong>Full flash:</strong> writes a 4 MB image at <code>0x0</code> and
+    erases NVS/LittleFS, including WiFi, MQTT, Home Assistant and profile
+    settings. Use the SD-card or <code>/ota</code> update path when you want to
+    keep the current configuration.
+  </div>
+
+  <section class="card">
+    <h2>1. Choose firmware</h2>
+    <label for="board">Board</label>
+    <select id="board">
+      <option value="base">Base node</option>
+      <option value="remote">Remote node</option>
+    </select>
+
+    <div class="row">
+      <button id="latest" type="button">Load bundled firmware</button>
+      <span id="release" class="muted">No firmware loaded</span>
+    </div>
+    <p id="firmware" class="muted">No firmware loaded.</p>
+  </section>
+
+  <section class="card">
+    <h2>2. Connect and flash</h2>
+    <div class="row">
+      <button id="connect" type="button">Connect USB</button>
+      <button id="disconnect" class="secondary" type="button" disabled>Disconnect</button>
+      <span id="chip" class="pill">Not connected</span>
+    </div>
+
+    <label class="check">
+      <input id="confirm" type="checkbox">
+      <span>I understand the full flash erases all settings and the active profile.</span>
+    </label>
+
+    <button id="flash" class="danger" type="button" disabled>Flash firmware</button>
+    <progress id="progress" max="100" value="0"></progress>
+    <pre id="log">Ready.</pre>
+  </section>
+</main>
+<script type="module" src="./flasher.js"></script>
+</body>
+</html>

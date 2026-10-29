@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build_assets.mjs"
+    "build": "node build_assets.mjs",
+    "check:flasher": "node --check flasher/flasher.js"
   }
 }

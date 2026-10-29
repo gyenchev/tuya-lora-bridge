@@ -1,5 +1,15 @@
 # Browser profile catalog and converter
 
+## Web Serial flasher
+
+`flasher/` contains the hosted Web Serial USB flasher for both boards:
+
+**<https://gyenchev.github.io/tuya-lora-bridge/>**
+
+The GitHub Pages deployment includes the full images from the latest `main`
+build. Full flashing erases NVS and LittleFS; use SD/OTA when settings must be
+preserved. See [`flasher/README.md`](flasher/README.md).
+
 The base node stores only the selected profile pack. The profile editor in the
 browser browses the upstream [tuya-local](https://github.com/make-all/tuya-local)
 repository directly, converts a selected YAML descriptor into precompiled Home
