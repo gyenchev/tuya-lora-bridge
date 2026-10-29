@@ -33,6 +33,7 @@ extern uint16_t profileEntityCount();
 extern bool loraConfigBusy();
 extern String loraConfigStatusJson();
 extern bool startLoraConfigChange(const tuya_lora::LoraConfig &desired, String &error);
+extern bool applyBaseOnlyLoraChange(const tuya_lora::LoraConfig &desired, String &error);
 extern void loraConfigFromSettings(const tuya_lora::BaseSettings &s, tuya_lora::LoraConfig &out);
 extern bool loraConfigEquals(const tuya_lora::LoraConfig &a, const tuya_lora::LoraConfig &b);
 
@@ -247,7 +248,7 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
       <label for="lora_psk">Pre-shared key <span class="def">required</span></label>
       <input id="lora_psk" name="lora_psk" type="password" maxlength="32" pattern="[0-9A-Fa-f]{32}" autocomplete="new-password" placeholder="{{PSK_PLACEHOLDER}}">
       <button type="button" id="generate-psk">Generate new PSK</button>
-      <p class="hint">32 hex characters. The base sends a new key to the remote with the coordinated LoRa settings change.</p>
+      <p class="hint">32 hex characters. The base sends a new key to the remote with the coordinated LoRa settings change, or applies it to the base only.</p>
       {{LORA_FIELDS}}
       <div class="status" id="duty-info">Duty-cycle information will appear here.</div>
       <p class="hint">EU/CEPT non-specific SRD reference: 868.0-868.6 MHz 1%, 868.7-869.2 MHz 0.1%, 869.4-869.65 MHz 10%, 869.7-870.0 MHz 1%. Alarm sub-bands have extra restrictions; verify local rules.</p>
@@ -255,6 +256,9 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
       <p class="hint">The remote acknowledges first, then both nodes reinitialize their radios. The change is committed after the new link is proven; if there is no communication within 5 minutes, both restore the previous settings.</p>
       <button type="submit" formaction="/lora/apply" formmethod="post" formnovalidate>Apply LoRa settings to both nodes</button>
       <div class="status" id="lora-config-status">LoRa config: idle</div>
+      <h2>Apply to base node only</h2>
+      <p class="hint">Saves and reconfigures only the base radio. Frequency, sync word, PSK or modem changes leave the remote offline until it uses matching settings. This action has no automatic rollback; use it to match a remote that was configured separately.</p>
+      <button class="secondary" type="submit" formaction="/lora/apply-base" formmethod="post" formnovalidate onclick="return confirm('Apply these LoRa settings to the base node only? Link-affecting changes will drop the remote until it matches. No automatic rollback will start.');">Apply LoRa settings to base only</button>
     </section>
 
     <section class="tab-panel" id="tab-device" data-tab-panel="device" role="tabpanel">
@@ -1866,23 +1870,27 @@ void handleSave() {
   rebootAtMs = millis() + 1500;
 }
 
-void handleLoraApply() {
+bool readLoraForm(BaseSettings &next, String &error) {
   if (!server->hasArg("lora_frequency_mhz")) {
-    server->send(400, "text/plain", "Bad request");
-    return;
+    error = "Bad request";
+    return false;
   }
 
-  BaseSettings next = settings;
   copyArg("lora_psk", next.loraPsk, sizeof(next.loraPsk), true);
-  String error;
   String tab = "lora";
-  if (!applyAdvancedFields(next, error, tab)) {
-    renderForm(settings, error, 400, "lora");
-    return;
-  }
+  if (!applyAdvancedFields(next, error, tab)) return false;
   if (!isValidPsk(next.loraPsk)) {
-    renderForm(settings, "LoRa PSK must be exactly 32 hex characters.", 400,
-               "lora");
+    error = "LoRa PSK must be exactly 32 hex characters.";
+    return false;
+  }
+  return true;
+}
+
+void handleLoraApply() {
+  BaseSettings next = settings;
+  String error;
+  if (!readLoraForm(next, error)) {
+    renderForm(settings, error, 400, "lora");
     return;
   }
 
@@ -1895,6 +1903,35 @@ void handleLoraApply() {
 
   server->sendHeader("Location", "/settings#lora");
   server->send(303, "text/plain", "");
+}
+
+void handleLoraApplyBase() {
+  if (loraConfigBusy()) {
+    renderForm(settings,
+               "A LoRa configuration change is already in progress. Wait for "
+               "it to finish or fail before applying base-only settings.",
+               409, "lora");
+    return;
+  }
+
+  BaseSettings next = settings;
+  String error;
+  if (!readLoraForm(next, error)) {
+    renderForm(settings, error, 400, "lora");
+    return;
+  }
+
+  tuya_lora::LoraConfig desired;
+  loraConfigFromSettings(next, desired);
+  if (!applyBaseOnlyLoraChange(desired, error)) {
+    renderForm(settings, error, 400, "lora");
+    return;
+  }
+
+  sendResult("LoRa settings applied to base node only",
+             "The base radio is now using the new settings. Link-affecting "
+             "changes leave the remote node offline until it uses matching "
+             "settings. No automatic rollback was started.");
 }
 
 void handleGeneratePsk() {
@@ -2225,6 +2262,7 @@ void webUiBegin() {
   server->on("/api/status", HTTP_GET, handleApiStatus);
   server->on("/save", HTTP_POST, handleSave);
   server->on("/lora/apply", HTTP_POST, handleLoraApply);
+  server->on("/lora/apply-base", HTTP_POST, handleLoraApplyBase);
   server->on("/api/lora/psk", HTTP_POST, handleGeneratePsk);
   server->on("/factory", HTTP_POST, handleFactory);
   server->on("/scan", HTTP_GET, handleScan);

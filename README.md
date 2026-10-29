@@ -76,7 +76,8 @@ The Tuya device stays on its own local protections and schedules.
 - Coordinated LoRa link configuration from the base: frequency, SF, bandwidth,
   coding rate, preamble, sync word, TX power and PSK are applied to both nodes
   live, committed after a new-link handshake, and rolled back after five minutes
-  without communication.
+  without communication. A separate base-only apply saves and reconfigures just
+  the base radio for matching a remote that was configured manually.
 - LoRa frequency presets for the EU 868-870 MHz bands, generated PSK support,
   and a duty-cycle calculator in the base LoRa tab.
 - Streaming profile-pack storage (metadata + one small file per discovery

@@ -145,7 +145,7 @@ the nodes on trusted networks.
 |---|---|
 | WiFi | Home WiFi SSID/password and network scan |
 | MQTT | Broker host, port, username, password, keepalive, socket timeout and buffer size. Use at least 8192 bytes for browser packs; larger discovery configs are single MQTT messages. |
-| LoRa | Coordinated link settings: frequency presets/custom, bandwidth, SF, coding rate, TX power, preamble, sync word and PSK. **Generate new PSK** and **Apply LoRa settings to both nodes** stage the change; the base and remote reinitialize live and commit after the new-link handshake. |
+| LoRa | Link settings: frequency presets/custom, bandwidth, SF, coding rate, TX power, preamble, sync word and PSK. **Generate new PSK** and **Apply LoRa settings to both nodes** stage the change; the base and remote reinitialize live and commit after the new-link handshake. **Apply LoRa settings to base only** saves and reconfigures just the base radio, without a rollback timer. |
 | Home Assistant | Device name, timezone, discovery prefix and stable device identifier |
 | Timing | Offline timeout, snapshot/chunk timeouts, retry intervals, WiFi/MQTT reconnect intervals and display timings |
 | Control | Command enable. Command DPs and value ranges come from the active profile. |
@@ -255,9 +255,18 @@ readiness (`available`/`unknown`) and the active profile name.
 
 The base **LoRa** tab is the authoritative place for radio configuration. It
 offers EU 868-870 MHz presets, dropdowns, a custom frequency field, a generated
-PSK, and a live duty-cycle estimate. A change is sent to the remote first; both
-nodes keep the previous settings in NVS until the new link is proven. If no
-communication is established within five minutes, both restore the old settings.
+PSK, and a live duty-cycle estimate. A coordinated change is sent to the remote
+first; both nodes keep the previous settings in NVS until the new link is
+proven. If no communication is established within five minutes, both restore the
+old settings.
+
+**Apply LoRa settings to base only** is the escape hatch for a remote that was
+configured separately, or for a base-local change such as TX power. It saves the
+new values and reinitializes only the base radio. Changes to frequency, sync
+word, PSK or modem settings drop the LoRa link until the remote uses matching
+values, and no automatic rollback is started. The base remains reachable over
+WiFi to correct the settings.
+
 Factory reset sets both nodes back to the all-zero default PSK; generate a new
 key before deployment.
 
