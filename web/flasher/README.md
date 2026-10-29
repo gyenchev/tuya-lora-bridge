@@ -19,10 +19,11 @@ a manifest.
 ## Flash flow
 
 1. Select **Base node** or **Remote node**.
-2. Click **Load bundled firmware**.
-3. Click **Connect USB** and select the board's serial port.
-4. Tick the confirmation checkbox.
-5. Click **Flash firmware**.
+2. Choose a release from the latest 10 releases.
+3. Click **Load selected firmware**.
+4. Click **Connect USB** and select the board's serial port.
+5. Tick the confirmation checkbox.
+6. Click **Flash firmware**.
 
 The board is reset after a successful flash.
 

@@ -223,10 +223,10 @@ Hosted Web Serial flasher:
 
 **<https://gyenchev.github.io/tuya-lora-bridge/>**
 
-Open it in desktop Chrome or Edge, select the base or remote board, load the
-bundled firmware, connect USB, and flash. GitHub Pages publishes the flasher and
-the latest `main` full images together, so no helper server or CORS workaround is
-needed.
+Open it in desktop Chrome or Edge, select the base or remote board, choose one
+of the latest 10 releases, load its full image, connect USB, and flash. GitHub
+Pages publishes the flasher and the recent full images together, so no helper
+server or CORS workaround is needed.
 
 This writes a full 4 MB image and **erases NVS/LittleFS settings**. Use the
 SD-card or `/ota` path when settings must be preserved. See

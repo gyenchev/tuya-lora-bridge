@@ -35,7 +35,7 @@
 <body>
 <main>
   <h1>Tuya LoRa Bridge — Web Serial Flasher</h1>
-  <p class="muted">Chrome or Edge desktop · USB cable · full 4 MB ESP32 image</p>
+  <p class="muted">Chrome or Edge desktop · USB cable · latest 10 releases · full 4 MB ESP32 image</p>
 
   <div id="unsupported" class="err" hidden>
     This browser does not support Web Serial. Use desktop Chrome or Edge and
@@ -57,8 +57,13 @@
       <option value="remote">Remote node</option>
     </select>
 
+    <label for="version">Release</label>
+    <select id="version" disabled>
+      <option>Loading releases...</option>
+    </select>
+
     <div class="row">
-      <button id="latest" type="button">Load bundled firmware</button>
+      <button id="latest" type="button">Load selected firmware</button>
       <span id="release" class="muted">No firmware loaded</span>
     </div>
     <p id="firmware" class="muted">No firmware loaded.</p>
