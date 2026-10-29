@@ -736,6 +736,11 @@ bool applyBaseOnlyLoraChange(const LoraConfig &desired, String &error) {
     error = "A LoRa configuration change is already in progress.";
     return false;
   }
+  if (!radioReady) {
+    error = "The LoRa radio is not initialized. Check the SX1276 module and "
+            "wiring, then reboot the base before applying radio settings.";
+    return false;
+  }
   if (!validateLoraConfig(desired, error)) return false;
 
   LoraConfig current;
