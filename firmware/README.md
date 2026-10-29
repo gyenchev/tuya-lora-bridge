@@ -278,6 +278,35 @@ the AP, device discovery, Tuya connection, snapshot activity and LoRa status.
 Both sketches print boot diagnostics and frame/connection events to the serial
 console at `115200` baud. Credentials are never printed.
 
+## Wi-Fi OTA update
+
+Both boards serve a firmware upload page at `/ota`:
+
+- Base: `http://<base-ip>/ota`
+- Remote: `http://192.168.4.1/ota`
+
+Upload the matching application image:
+
+```text
+base-node.bin
+remote-node.bin
+```
+
+The page writes the inactive OTA slot, validates the image, and reboots into it.
+The same images are used for SD-card updates. Do not upload the `*-full.bin`
+images through `/ota`; those are full USB flash images.
+
+The endpoint also accepts a raw upload:
+
+```bash
+curl --data-binary @base-node.bin 'http://<base-ip>/api/ota?board=base'
+curl --data-binary @remote-node.bin 'http://192.168.4.1/api/ota?board=remote'
+```
+
+The web UI and OTA endpoint are unauthenticated. Keep them on a trusted network
+and do not expose them to the internet. The OTA path has no automatic rollback;
+a failed upload leaves the current application running.
+
 ## SD-card firmware update
 
 Both boards can update from a FAT32 microSD card in the onboard slot.

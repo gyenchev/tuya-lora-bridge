@@ -178,7 +178,7 @@ connected to MQTT and Home Assistant.
   dynamic load balancing.
 - Most Tuya devices accept one local TCP client at a time.
 - The firmware has no physical arm-switch input.
-- Updates use the SD card; network OTA is not included.
+- Updates use the SD card or the unauthenticated `/ota` page; there is no cloud OTA or automatic rollback.
 - The web UI is unauthenticated and must stay on a trusted network.
 - LoRa range and duty cycle depend on the antenna, enclosure and local
   interference.
@@ -186,7 +186,7 @@ connected to MQTT and Home Assistant.
 ## Possible extensions
 
 - A physical remote-control enable input.
-- Network OTA with rollback.
+- Authenticated OTA with automatic rollback.
 - Multi-device support.
 - Extended energy and cost reporting.
 - Additional phase-level diagnostics in Home Assistant.

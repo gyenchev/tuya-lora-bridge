@@ -3,6 +3,7 @@
 #include <PubSubClient.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <Update.h>
 
 #include <esp_system.h>
 #include <string.h>
@@ -45,6 +46,95 @@ bool setupApActive = false;
 uint32_t rebootAtMs = 0;
 uint32_t lastWifiOkMs = 0;
 uint32_t lastSetupApAttemptMs = 0;
+
+const char OTA_HTML[] PROGMEM = R"HTML(<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tuya LoRa Bridge — Firmware update</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px; font: 16px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; }
+  main { max-width: 680px; margin: 0 auto; }
+  h1 { font-size: 1.45rem; margin: 0 0 4px; }
+  .muted { opacity: .7; font-size: .9rem; }
+  .nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+  .nav a { padding: 8px 12px; border-radius: 8px; text-decoration: none; color: inherit; background: #8882; font-weight: 600; }
+  .nav a.active { background: #2563eb; color: #fff; }
+  .warn { margin: 16px 0; padding: 12px 14px; border: 1px solid #d90; border-radius: 10px; background: #d901; }
+  .card { margin: 16px 0; padding: 16px; border: 1px solid #8884; border-radius: 10px; }
+  label { display: block; margin: 0 0 8px; font-weight: 600; }
+  input[type=file] { width: 100%; padding: 10px; border: 1px solid #8886; border-radius: 8px; background: transparent; color: inherit; }
+  button { margin-top: 12px; padding: 10px 16px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; font-weight: 650; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: wait; }
+  progress { width: 100%; height: 14px; margin-top: 12px; }
+  pre { white-space: pre-wrap; word-break: break-word; background: #8881; padding: 12px; border-radius: 8px; min-height: 48px; }
+</style>
+</head>
+<body>
+<main>
+  <nav class="nav">{{NAV}}</nav>
+  <h1>Firmware update — {{TITLE}}</h1>
+  <p class="muted">Current firmware {{FW_VERSION}} · board {{BOARD}}</p>
+
+  <div class="warn">
+    Upload the <strong>application image</strong> <code>{{FILENAME}}</code>, not the
+    full flash image. Do not power off during the update.
+  </div>
+
+  <div class="card">
+    <form id="upload">
+      <label for="file">Firmware .bin file</label>
+      <input id="file" type="file" accept=".bin,application/octet-stream" required>
+      <button id="send" type="submit">Upload and reboot</button>
+    </form>
+    <progress id="progress" max="100" value="0"></progress>
+    <pre id="log">Ready.</pre>
+  </div>
+</main>
+<script>
+(() => {
+  const form = document.getElementById('upload');
+  const input = document.getElementById('file');
+  const button = document.getElementById('send');
+  const progress = document.getElementById('progress');
+  const log = document.getElementById('log');
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!input.files || input.files.length === 0) {
+      log.textContent = 'Choose a .bin file first.';
+      return;
+    }
+    const file = input.files[0];
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/ota?board={{BOARD}}');
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const percent = Math.round((event.loaded * 100) / event.total);
+      progress.value = percent;
+      log.textContent = `Uploading ${percent}% (${event.loaded} / ${event.total} bytes)`;
+    };
+    xhr.onload = () => {
+      progress.value = 100;
+      log.textContent = xhr.responseText || ('HTTP ' + xhr.status);
+      button.disabled = false;
+    };
+    xhr.onerror = () => {
+      log.textContent = 'Upload failed. Check the connection and try again.';
+      button.disabled = false;
+    };
+    button.disabled = true;
+    log.textContent = 'Starting upload...';
+    xhr.send(file);
+  });
+})();
+</script>
+</body>
+</html>)HTML";
 
 const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
 <html lang="en">
@@ -94,7 +184,7 @@ const char BASE_HTML[] PROGMEM = R"HTML(<!doctype html>
 </head>
 <body data-active-tab="{{ACTIVE_TAB}}">
 <main>
-  <nav class="nav"><a href="/">Status</a><a href="/lora">LoRa</a><a class="active" href="/settings">Settings</a></nav>
+  <nav class="nav"><a href="/">Status</a><a href="/lora">LoRa</a><a class="active" href="/settings">Settings</a><a href="/ota">Firmware</a></nav>
   <h1>Tuya LoRa Bridge — Base</h1>
   <p class="muted">Firmware {{FW_VERSION}} · {{IP}}</p>
 
@@ -421,7 +511,7 @@ const char STATUS_HTML[] PROGMEM = R"HTML(<!doctype html>
 </head>
 <body>
 <main>
-  <nav class="nav"><a class="active" href="/">Status</a><a href="/lora">LoRa</a><a href="/settings">Settings</a></nav>
+  <nav class="nav"><a class="active" href="/">Status</a><a href="/lora">LoRa</a><a href="/settings">Settings</a><a href="/ota">Firmware</a></nav>
   <h1>Tuya LoRa Bridge — Base status</h1>
   <p class="muted">Firmware {{FW_VERSION}} · <span id="updated">loading...</span></p>
 
@@ -611,7 +701,7 @@ const char LORA_HTML[] PROGMEM = R"HTML(<!doctype html>
 </head>
 <body>
 <main>
-  <nav class="nav"><a href="/">Status</a><a class="active" href="/lora">LoRa</a><a href="/settings">Settings</a></nav>
+  <nav class="nav"><a href="/">Status</a><a class="active" href="/lora">LoRa</a><a href="/settings">Settings</a><a href="/ota">Firmware</a></nav>
   <h1>LoRa link telemetry</h1>
   <p class="muted">Firmware {{FW_VERSION}} · <span id="updated">loading...</span></p>
 
@@ -2014,6 +2104,99 @@ void startSetupAp() {
                 WiFi.softAPIP().toString().c_str(), ok ? "ok" : "FAILED");
 }
 
+constexpr const char *OTA_BOARD = "base";
+bool otaRequestSeen = false;
+bool otaSuccess = false;
+bool otaActive = false;
+String otaError;
+
+void handleOtaPage() {
+  String page = FPSTR(OTA_HTML);
+  page.replace("{{NAV}}", R"NAV(<a href="/">Status</a><a href="/lora">LoRa</a><a href="/settings">Settings</a><a class="active" href="/ota">Firmware</a>)NAV");
+  page.replace("{{TITLE}}", "Base");
+  page.replace("{{BOARD}}", "base");
+  page.replace("{{FILENAME}}", "base-node.bin");
+  page.replace("{{FW_VERSION}}", FW_VERSION);
+  server->sendHeader("Cache-Control", "no-store");
+  server->send(200, "text/html", page);
+}
+
+void handleOtaUpload() {
+  HTTPRaw &raw = server->raw();
+
+  if (raw.status == RAW_START) {
+    otaRequestSeen = true;
+    otaSuccess = false;
+    otaActive = true;
+    otaError = "";
+    if (server->arg("board") != String(OTA_BOARD)) {
+      otaError = "wrong board identifier";
+      otaActive = false;
+      return;
+    }
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      otaError = Update.errorString();
+      if (otaError.length() == 0) otaError = "could not start OTA";
+    }
+    return;
+  }
+
+  if (raw.status == RAW_WRITE) {
+    if (!otaActive || otaError.length() != 0) return;
+    const size_t written = Update.write(raw.buf, raw.currentSize);
+    if (written != raw.currentSize) {
+      otaError = String("short write (") + String(written) + "/" +
+                 String(raw.currentSize) + ")";
+    }
+    return;
+  }
+
+  if (raw.status == RAW_END) {
+    if (otaActive && otaError.length() == 0) {
+      if (!Update.end(true)) {
+        otaError = Update.errorString();
+        if (otaError.length() == 0) otaError = "firmware verification failed";
+      } else if (!Update.isFinished()) {
+        otaError = "firmware update did not finish";
+      } else {
+        otaSuccess = true;
+      }
+    }
+    otaActive = false;
+    return;
+  }
+
+  if (raw.status == RAW_ABORTED) {
+    if (otaActive) Update.abort();
+    otaActive = false;
+    otaError = "upload aborted";
+  }
+}
+
+void handleOtaComplete() {
+  const bool seen = otaRequestSeen;
+  const bool success = otaSuccess;
+  String error = otaError;
+  otaRequestSeen = false;
+  otaSuccess = false;
+  otaActive = false;
+
+  if (!seen) {
+    server->send(400, "text/plain", "No firmware received.\n");
+    return;
+  }
+  if (!success) {
+    if (error.length() == 0) error = "unknown error";
+    Serial.printf("[ota] failed: %s\n", error.c_str());
+    server->send(500, "text/plain", String("OTA failed: ") + error + "\n");
+    return;
+  }
+
+  Serial.println("[ota] firmware written; rebooting");
+  server->send(200, "text/plain", "Firmware written. Rebooting...\n");
+  rebootAtMs = millis() + 1500;
+}
+
 }  // namespace
 
 void webUiBegin() {
@@ -2034,6 +2217,8 @@ void webUiBegin() {
   server->on("/", HTTP_GET, handleStatus);
   server->on("/lora", HTTP_GET, handleLora);
   server->on("/settings", HTTP_GET, handleSettings);
+  server->on("/ota", HTTP_GET, handleOtaPage);
+  server->on("/api/ota", HTTP_POST, handleOtaComplete, handleOtaUpload);
   server->on("/profiles", HTTP_GET, handleProfileBuilder);
   server->on("/profile_converter.mjs", HTTP_GET, handleProfileConverter);
   server->on("/profile_mapping.mjs", HTTP_GET, handleProfileMapping);
