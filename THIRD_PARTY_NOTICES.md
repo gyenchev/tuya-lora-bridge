@@ -49,3 +49,18 @@ Copyright 2018 Nik Rolls, 2026 Jason Rumney, 2022-2026 other contributors as lis
 
 If a generated profile pack or binary is distributed separately, include this
 notice file (or the MIT text above) with it.
+
+## esptool-js
+
+- Upstream: <https://github.com/espressif/esptool-js>
+- License: Apache-2.0
+- Material used: the vendored browser bundle at
+  `web/flasher/vendor/esptool-js.bundle.js`.
+- License text: `web/flasher/vendor/LICENSE-esptool-js`.
+
+## pako
+
+- Upstream: <https://github.com/nodeca/pako>
+- License: MIT
+- Material used: bundled inside `esptool-js.bundle.js`.
+- License text: `web/flasher/vendor/LICENSE-pako`.

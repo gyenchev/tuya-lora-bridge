@@ -1,5 +1,18 @@
 # Browser profile catalog and converter
 
+## Web Serial flasher
+
+`flasher/` contains a local Web Serial USB flasher for both boards:
+
+```bash
+npm run flasher
+```
+
+Open <http://localhost:8787/> in desktop Chrome or Edge. It can fetch the latest
+full release images through the local helper server or accept a local
+`*-full.bin`. Full flashing erases NVS and LittleFS; use SD/OTA when settings must
+be preserved. See [`flasher/README.md`](flasher/README.md).
+
 The base node stores only the selected profile pack. The profile editor in the
 browser browses the upstream [tuya-local](https://github.com/make-all/tuya-local)
 repository directly, converts a selected YAML descriptor into precompiled Home

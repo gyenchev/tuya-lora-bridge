@@ -210,6 +210,24 @@ The workflow regenerates the embedded profile assets and fails if the committed
 `web_assets.cpp/.h` files are out of date, so run `node web/build_assets.mjs`
 before committing web asset changes.
 
+### Browser USB flasher
+
+The repository also contains a local Web Serial flasher for recovery and initial
+flashing:
+
+```bash
+npm --prefix web run flasher
+```
+
+Open `http://localhost:8787/` in desktop Chrome or Edge, select the base or
+remote board, load the latest full release image or a local `*-full.bin`, connect
+USB, and flash. The helper server fetches release assets server-side, so the
+browser does not need GitHub CORS support.
+
+This writes a full 4 MB image and **erases NVS/LittleFS settings**. Use the
+SD-card or `/ota` path when settings must be preserved. See
+[`web/flasher/README.md`](web/flasher/README.md).
+
 When a node has no saved configuration, it starts a setup AP:
 
 | Node | Setup AP SSID | Default password | URL |
@@ -413,6 +431,7 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 | [`docs/hardware-safety.md`](docs/hardware-safety.md) | BOM, power, enclosure, radio rules and electrical safety |
 | [`docs/testing.md`](docs/testing.md) | Validation matrix, acceptance checks and known limitations |
 | [`web/README.md`](web/README.md) | Runtime tuya-local browser, JSON editor, converter and asset embedding |
+| [`web/flasher/README.md`](web/flasher/README.md) | Web Serial USB recovery flasher |
 | [`firmware/README.md`](firmware/README.md) | Build, flash, web UI settings, SD updates and board notes |
 
 ## License and disclaimer
