@@ -212,19 +212,50 @@ jobs:
           name: Tuya LoRa Bridge ${{ needs.version.outputs.version }}
           target_commitish: ${{ github.sha }}
           body: |
-            Automated firmware build for commit `${{ github.sha }}`.
-            Version: `${{ needs.version.outputs.version }}`.
+            ## Tuya LoRa Bridge ${{ needs.version.outputs.version }}
 
-            **SD-card update images** — copy to the card root:
-            - `base-node.bin`
-            - `remote-node.bin`
+            Automated firmware build from commit `${{ github.sha }}`.
 
-            **Full USB flash images** — bootloader, partition table and app:
-            - `base-node-full.bin`
-            - `remote-node-full.bin`
+            ### Which image goes where
 
-            Verify the assets with `SHA256SUMS.txt`. See the firmware README for
-            flashing and first-start instructions.
+            | Image | Node | Use |
+            |---|---|---|
+            | `base-node.bin` | Base / receiver | SD card or Wi-Fi OTA application image |
+            | `remote-node.bin` | Remote / Tuya AP proxy | SD card or Wi-Fi OTA application image |
+            | `base-node-full.bin` | Base / receiver | Full 4 MB USB image (bootloader + partition table + app) |
+            | `remote-node-full.bin` | Remote / Tuya AP proxy | Full 4 MB USB image (bootloader + partition table + app) |
+            | `SHA256SUMS.txt` | — | SHA-256 checksums |
+
+            ### SD-card update
+
+            1. Copy `base-node.bin` to the base node's SD-card root.
+            2. Copy `remote-node.bin` to the remote node's SD-card root. One card can hold both files.
+            3. Insert the card and reset the board. It shows a 10-second countdown, flashes the matching file, shows `UPDATE OK`, renames the file to `.done`, and reboots.
+            4. Keep the card inserted and power on until the update finishes.
+
+            ### Wi-Fi OTA
+
+            Open `/ota` on the node and upload the matching application image
+            (`base-node.bin` or `remote-node.bin`). The node writes the inactive OTA
+            slot, verifies it, and reboots. Do not upload a `*-full.bin` image through
+            `/ota`.
+
+            - Base: `http://<base-ip>/ota`
+            - Remote: `http://192.168.4.1/ota` (connect to the remote AP)
+
+            ### Full USB flash and recovery
+
+            Use the attached `-full.bin` files with esptool or the ESP32 Flash Download
+            Tool. The full image is written at address `0x0` and erases NVS/LittleFS,
+            including WiFi, MQTT, Home Assistant and profile settings.
+
+            Hosted Web Serial flasher: <https://gyenchev.github.io/tuya-lora-bridge/>  
+            Desktop Chrome/Edge and a USB data cable are required.
+
+            ### Verify
+
+            Check the downloaded files against `SHA256SUMS.txt`, and see the
+            [firmware README](https://github.com/gyenchev/tuya-lora-bridge/blob/main/firmware/README.md) for details.
           files: dist/*
           fail_on_unmatched_files: true
           overwrite_files: true
