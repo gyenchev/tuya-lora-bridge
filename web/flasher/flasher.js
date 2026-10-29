@@ -61,32 +61,67 @@ function formatBytes(value) {
   return `${(value / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
+async function fetchStaticFirmware(board) {
+  const manifestResponse = await fetch('./firmware/manifest.json', { cache: 'no-store' });
+  if (!manifestResponse.ok) throw new Error(`no bundled manifest (HTTP ${manifestResponse.status})`);
+  const manifest = await manifestResponse.json();
+  const name = manifest.assets?.[board] ||
+    (board === 'base' ? 'base-node-full.bin' : 'remote-node-full.bin');
+  const response = await fetch(`./firmware/${encodeURIComponent(name)}`, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`bundled image HTTP ${response.status}`);
+  return {
+    data: new Uint8Array(await response.arrayBuffer()),
+    release: manifest.tag || 'bundled build',
+    sha: manifest.sha256?.[board] || '',
+  };
+}
+
+async function fetchServerFirmware(board) {
+  const response = await fetch(`/api/firmware?board=${encodeURIComponent(board)}`, {
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    throw new Error(`local server HTTP ${response.status}: ${await response.text()}`);
+  }
+  return {
+    data: new Uint8Array(await response.arrayBuffer()),
+    release: response.headers.get('X-Firmware-Release') || 'latest release',
+    sha: response.headers.get('X-Firmware-SHA256') || '',
+  };
+}
+
 async function loadLatest() {
+  const board = boardEl.value;
   try {
     setBusy(true);
     clearLog();
-    releaseEl.textContent = 'Fetching latest release...';
-    log(`Fetching latest ${boardEl.value} full image from the local flasher server...`);
-    const response = await fetch(`/api/firmware?board=${encodeURIComponent(boardEl.value)}`, {
-      cache: 'no-store',
-    });
-    if (!response.ok) {
-      throw new Error(`server returned HTTP ${response.status}: ${await response.text()}`);
+    releaseEl.textContent = 'Fetching firmware...';
+
+    let result = null;
+    try {
+      log('Trying firmware bundled with the hosted flasher...');
+      result = await fetchStaticFirmware(board);
+    } catch (error) {
+      log(`Bundled firmware unavailable: ${error.message}`);
     }
-    const data = new Uint8Array(await response.arrayBuffer());
-    if (data.byteLength !== FULL_IMAGE_BYTES) {
-      throw new Error(`expected a 4 MiB full image, got ${formatBytes(data.byteLength)}`);
+
+    if (!result) {
+      log('Trying the local flasher server...');
+      result = await fetchServerFirmware(board);
     }
-    const release = response.headers.get('X-Firmware-Release') || 'latest release';
-    const sha = response.headers.get('X-Firmware-SHA256') || '';
-    setFirmware(data, `${boardEl.value} full image`);
-    releaseEl.textContent = `${release}${sha ? ` · sha256 ${sha.slice(0, 12)}…` : ''}`;
-    log(`Loaded ${boardEl.value} full image (${formatBytes(data.byteLength)}) from ${release}.`);
+
+    if (result.data.byteLength !== FULL_IMAGE_BYTES) {
+      throw new Error(`expected a 4 MiB full image, got ${formatBytes(result.data.byteLength)}`);
+    }
+
+    setFirmware(result.data, `${board} full image`);
+    releaseEl.textContent = `${result.release}${result.sha ? ` · sha256 ${result.sha.slice(0, 12)}…` : ''}`;
+    log(`Loaded ${board} full image (${formatBytes(result.data.byteLength)}) from ${result.release}.`);
   } catch (error) {
-    releaseEl.textContent = 'Could not load latest release';
+    releaseEl.textContent = 'Could not load firmware';
     setFirmware(null, '');
-    log(`Latest release failed: ${error.message}`);
-    log('Start the flasher with "npm run flasher" or choose a local full .bin file.');
+    log(`Firmware load failed: ${error.message}`);
+    log('Choose a local full .bin file, or run the local flasher helper with "npm run flasher".');
   } finally {
     setBusy(false);
   }

@@ -1,9 +1,16 @@
 # Web Serial flasher
 
-A local browser flasher for the ESP32 base and remote nodes. It uses the
+A browser flasher for the ESP32 base and remote nodes. It uses the
 [Web Serial API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API)
 and [esptool-js](https://github.com/espressif/esptool-js) to write a full 4 MB
 image over USB.
+
+**Hosted:** <https://gyenchev.github.io/tuya-lora-bridge/>  
+The GitHub Pages build bundles the latest `main` full images and a manifest, so
+the hosted page works without a local server.
+
+The same page can also run locally for offline use or when you want to fetch the
+latest GitHub release instead.
 
 ## Requirements
 
@@ -13,7 +20,7 @@ image over USB.
 - The flasher must be opened from `http://localhost`, `http://127.0.0.1`, or an
   HTTPS origin. Web Serial is not available on a plain LAN `http://` address.
 
-## Run
+## Run locally
 
 ```bash
 npm run flasher
@@ -21,7 +28,10 @@ npm run flasher
 
 Then open <http://localhost:8787/>.
 
-The helper server:
+The page first tries firmware bundled next to it under `firmware/`. This is how
+the GitHub Pages deployment works.
+
+The local helper server:
 
 - serves the flasher page and the vendored esptool-js bundle;
 - fetches the latest GitHub release metadata server-side, avoiding browser CORS
@@ -63,6 +73,10 @@ and try again.
 
 ## Hosting
 
-The page is static. It can be hosted on an HTTPS origin, but the
-**Load latest release** button requires the local helper server. Without it, use
-the local file input.
+The page is static and is deployed to GitHub Pages by
+`.github/workflows/firmware.yml`. The Pages job copies the full images built from
+the same commit and writes `firmware/manifest.json`.
+
+For another HTTPS host, copy `index.html`, `flasher.js`, `vendor/`, and a
+`firmware/` directory containing the two full images plus `manifest.json`. The
+local file input works even without a firmware directory.

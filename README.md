@@ -212,17 +212,23 @@ before committing web asset changes.
 
 ### Browser USB flasher
 
-The repository also contains a local Web Serial flasher for recovery and initial
-flashing:
+Hosted Web Serial flasher:
+
+**<https://gyenchev.github.io/tuya-lora-bridge/>**
+
+Open it in desktop Chrome or Edge, select the base or remote board, load the
+bundled firmware, connect USB, and flash. GitHub Pages publishes the flasher and
+the latest `main` full images together, so no helper server or CORS workaround is
+needed.
+
+For offline use, the same page can be run locally:
 
 ```bash
 npm --prefix web run flasher
 ```
 
-Open `http://localhost:8787/` in desktop Chrome or Edge, select the base or
-remote board, load the latest full release image or a local `*-full.bin`, connect
-USB, and flash. The helper server fetches release assets server-side, so the
-browser does not need GitHub CORS support.
+and opened at `http://localhost:8787/`. The local helper fetches release assets
+server-side; the local file picker works without either backend.
 
 This writes a full 4 MB image and **erases NVS/LittleFS settings**. Use the
 SD-card or `/ota` path when settings must be preserved. See

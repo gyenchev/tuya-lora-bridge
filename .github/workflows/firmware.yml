@@ -191,3 +191,90 @@ jobs:
           make_latest: true
           draft: false
           prerelease: false
+
+  pages:
+    name: Deploy Web Serial flasher to GitHub Pages
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download firmware bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-${{ github.sha }}
+          path: dist
+
+      - name: Assemble Pages site
+        run: |
+          set -euo pipefail
+          SITE="$RUNNER_TEMP/pages-site"
+          mkdir -p "$SITE/firmware"
+          cp web/flasher/index.html "$SITE/"
+          cp web/flasher/flasher.js "$SITE/"
+          cp -R web/flasher/vendor "$SITE/vendor"
+          cp dist/base-node-full.bin dist/remote-node-full.bin              dist/SHA256SUMS.txt dist/README.txt "$SITE/firmware/"
+
+          version="$(sed -n 's/^#define FW_VERSION "\(.*\)"/\1/p' firmware/base-node/config.h)"
+          short_sha="${GITHUB_SHA::7}"
+          VERSION="$version" TAG="v$version-$short_sha" COMMIT="$GITHUB_SHA"             BUILT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"             python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          site = Path(os.environ["RUNNER_TEMP"]) / "pages-site"
+
+          def digest(name):
+              h = hashlib.sha256()
+              with (site / "firmware" / name).open("rb") as f:
+                  for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          manifest = {
+              "version": os.environ["VERSION"],
+              "tag": os.environ["TAG"],
+              "commit": os.environ["COMMIT"],
+              "built": os.environ["BUILT"],
+              "assets": {
+                  "base": "base-node-full.bin",
+                  "remote": "remote-node-full.bin",
+              },
+              "sha256": {
+                  "base": digest("base-node-full.bin"),
+                  "remote": digest("remote-node-full.bin"),
+              },
+          }
+          (site / "firmware" / "manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n"
+          )
+          print(json.dumps(manifest, indent=2))
+          PY
+
+          find "$SITE" -maxdepth 3 -type f -printf '%P %s bytes\n' | sort
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/pages-site
+
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
