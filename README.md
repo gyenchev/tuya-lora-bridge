@@ -83,7 +83,7 @@ The Tuya device stays on its own local protections and schedules.
   entity) in a 384 KB LittleFS partition; no single-JSON pack memory ceiling.
 - Web UI for all runtime settings; settings are stored in ESP32 NVS.
 - OLED status display on both nodes.
-- SD-card firmware updates for both nodes.
+- SD-card and browser-based Wi-Fi OTA firmware updates for both nodes.
 - Boot recovery: repeated short boots force the setup AP.
 
 ## Hardware
@@ -291,8 +291,10 @@ not require rebuilding the base firmware.
 
 - Base status: `http://<base-ip>/`
 - Base settings: `http://<base-ip>/settings`
+- Base firmware update: `http://<base-ip>/ota`
 - Remote status: `http://192.168.4.1/`
 - Remote settings: `http://192.168.4.1/settings`
+- Remote firmware update: `http://192.168.4.1/ota`
 
 Factory reset clears NVS and returns the node to its setup AP. If a node resets
 four times without staying up for 60 seconds, the next boot forces the setup AP
@@ -300,8 +302,14 @@ until settings are saved or a factory reset is performed.
 
 ## Firmware updates
 
-Both boards can update from a FAT32 microSD card. Copy the application images to
-the card root:
+Both boards support two update paths.
+
+**Wi-Fi OTA:** open `/ota` on the node (base on the home network, remote on its
+AP), select the matching application image, and upload it. The node writes the
+next OTA slot, verifies the image, and reboots. The upload endpoint is
+unauthenticated, so keep the web UI on a trusted network.
+
+**SD card:** copy the application images to the card root:
 
 ```text
 base-node.bin
@@ -311,6 +319,9 @@ remote-node.bin
 Insert the card and reset the board. The OLED shows a 10-second countdown, then
 flashes the matching image and reboots. Each board reads only its own file.
 Keep the card inserted until the update finishes.
+
+The same application images work for both paths. Do not upload the
+`*-full.bin` USB images through `/ota`; those are only for a full USB flash.
 
 ## Home Assistant
 
@@ -397,7 +408,7 @@ See [`docs/hardware-safety.md`](docs/hardware-safety.md) before installing.
 - Most Tuya devices accept one local TCP client at a time. Close the Tuya app or
   other local clients while the remote node is connected.
 - The firmware does not include a physical arm-switch input.
-- Firmware updates use the SD card; network OTA is not included.
+- Firmware updates use the SD card or the unauthenticated `/ota` page over the local network/AP. There is no cloud OTA or automatic rollback.
 - LoRa range and duty cycle depend on the antenna, enclosure and local
   interference. The default SF7 setting is intended for EU 868 MHz use.
 
