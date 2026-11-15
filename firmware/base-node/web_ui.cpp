@@ -2231,7 +2231,6 @@ void handleOtaComplete() {
 }  // namespace
 
 void webUiBegin() {
-  WiFi.mode(WIFI_AP_STA);
   WiFi.setHostname("tuya-lora-base");
   WiFi.setSleep(false);
   lastWifiOkMs = millis();
@@ -2241,7 +2240,15 @@ void webUiBegin() {
     Serial.println("[web] recovery mode: forcing setup AP");
   }
   if (!wifiConfigured() || forceSetup) {
+    // AP+STA is only needed while provisioning or recovering. Starting the
+    // ESP32 in AP+STA unconditionally can also expose the SDK's default open
+    // ESP_<chip-id> network alongside the configured station connection.
+    WiFi.mode(WIFI_AP_STA);
     startSetupAp();
+  } else {
+    // Do not create a SoftAP in normal operation. The web UI remains
+    // available through the station IP once WiFi.begin() connects.
+    WiFi.mode(WIFI_STA);
   }
 
   server = new WebServer(settings.webUiPort);
@@ -2295,6 +2302,7 @@ void webUiLoop() {
     if (setupApActive && !bootGuardForceSetupAp()) {
       WiFi.softAPdisconnect(false);
       setupApActive = false;
+      WiFi.mode(WIFI_STA);
       Serial.println("[web] WiFi connected, setup AP stopped");
     }
   } else if (!setupApActive &&
