@@ -67,6 +67,7 @@ copies synchronized.
 |---|---|---|
 | Arduino ESP32 core | 3.1.0 | ESP32, WiFi, WebServer, Preferences, SD, Update |
 | LoRa (Sandeep Mistry) | 0.8.0 | SX1276 radio |
+| RadioLib | 8.0.0 | SX1261-compatible radio support |
 | Adafruit SSD1306 | 2.5.13 | OLED |
 | Adafruit GFX Library | 1.11.11 | graphics |
 | ArduinoJson | 7.2.1 | Tuya and MQTT JSON |
